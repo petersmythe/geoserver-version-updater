@@ -1,0 +1,8 @@
+{
+  "_comment": "Maintained by PSC. Update when a new series is born or a series changes lifecycle stage (roughly every 6 months, per https://github.com/geoserver/geoserver/wiki/Release-Schedule). 'eol' is the date support ends.",
+  "series": [
+    { "series": "3.0.x",  "status": "stable",      "stable_since": "2026-03", "eol": "2027-04" },
+    { "series": "2.28.x", "status": "maintenance", "stable_since": "2025-09", "eol": "2026-09" },
+    { "series": "2.27.x", "status": "archived",    "stable_since": "2025-03", "eol": "2026-04" }
+  ]
+}

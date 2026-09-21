@@ -1,0 +1,83 @@
+name: Update GeoServer version feed
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub Releases land ~1hr ahead of blog
+    # confirmation per PSC observation, so this is frequent enough to
+    # catch a new release within minutes while staying well under the
+    # unauthenticated 60 req/hour GitHub API limit (this run uses ~3-10
+    # requests depending on how many new blog posts need fetching).
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}   # manual trigger button in the Actions UI
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-versions
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Shallow, single branch - we only need to commit one file back.
+          # (Sparse-checkout of just scripts/ would trim this further,
+          # but this repo is tiny enough that it's not worth the added
+          # complexity - checkout is already ~2s here.)
+          fetch-depth: 1
+
+      # No actions/setup-python step: ubuntu-latest ships a recent
+      # Python 3 already, and setup-python's own overhead (downloading
+      # and unpacking a hermetic build) is often bigger than the time
+      # this whole script takes to run. If a specific interpreter
+      # version ever becomes necessary, reintroduce setup-python with
+      # its cache: 'pip' option - not needed here since we have zero
+      # third-party dependencies.
+      - name: Run version checker
+        run: python3 scripts/check_versions.py
+
+      - name: Commit updated versions.json if changed
+        id: commit
+        run: |
+          if git diff --quiet -- versions.json; then
+            echo "No change in versions.json, nothing to commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "geoserver-version-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add versions.json
+          git commit -m "Update versions.json [automated]"
+          git push
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Purge jsDelivr cache
+        if: steps.commit.outputs.changed == 'true'
+        run: |
+          # jsDelivr fronts GitHub with its own CDN cache that does NOT
+          # auto-invalidate on push. Without this, clients can keep
+          # receiving a stale versions.json for hours after a real
+          # (possibly security-relevant) release has already landed.
+          # This is unauthenticated and rate-limited per-IP by jsDelivr,
+          # not by us - fine at this call frequency (max once per 15 min).
+          repo="${GITHUB_REPOSITORY}"
+          branch="${GITHUB_REF_NAME}"
+          url="https://purge.jsdelivr.net/gh/${repo}@${branch}/versions.json"
+          echo "Purging: $url"
+          for attempt in 1 2 3; do
+            status=$(curl -s -o /tmp/purge_response.json -w "%{http_code}" "$url")
+            echo "Attempt $attempt: HTTP $status"
+            cat /tmp/purge_response.json
+            echo
+            if [ "$status" = "200" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          # Don't fail the whole workflow over a purge hiccup - the
+          # commit already succeeded and the cache will still expire on
+          # its own TTL. Just make the miss visible in the run log.
+          echo "::warning::jsDelivr purge did not return 200 after 3 attempts; relying on TTL expiry instead."
