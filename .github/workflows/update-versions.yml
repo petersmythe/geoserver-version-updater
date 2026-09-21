@@ -2,12 +2,15 @@ name: Update GeoServer version feed
 
 on:
   schedule:
-    # Every 15 minutes. GitHub Releases land ~1hr ahead of blog
-    # confirmation per PSC observation, so this is frequent enough to
-    # catch a new release within minutes while staying well under the
-    # unauthenticated 60 req/hour GitHub API limit (this run uses ~3-10
-    # requests depending on how many new blog posts need fetching).
-    - cron: '*/15 * * * *'
+    # Every 15 minutes, offset from the top of the hour. GitHub Releases
+    # land ~1hr ahead of blog confirmation per PSC observation, so this is
+    # frequent enough to catch a new release within minutes while staying
+    # well under the unauthenticated 60 req/hour GitHub API limit (this
+    # run uses ~3-10 requests depending on how many new blog posts need
+    # fetching). Offset minutes (7/22/37/52) avoid the :00/:15/:30/:45
+    # herd times when GitHub Actions scheduling load is highest and
+    # scheduled runs are most likely to be delayed or dropped.
+    - cron: '7,22,37,52 * * * *'
   workflow_dispatch: {}   # manual trigger button in the Actions UI
 
 permissions:
