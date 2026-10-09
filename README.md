@@ -38,25 +38,27 @@ the URL.
 
 Phase is never configured. It is derived from the release history:
 
-1. Releases are grouped into events: releases whose publish times fall within
-   24 hours of each other.
-2. The most recent event that contains two or more series defines the
-   **actively maintained set**.
-3. The highest series in that set is `stable`; the others in it are
-   `maintenance`.
+1. Releases are grouped into events: every release within 24 hours of the
+   earliest release in the group.
+2. The most recent event that contains two or more series defines how many
+   series are **actively maintained** (N) and which ones.
+3. A series newer than all of those (for example a new series released on its
+   own) joins them. The top N by version are active: the highest is `stable`,
+   the others are `maintenance`. A new series therefore displaces the oldest
+   maintained one.
 4. Every other series is `archive`.
 
 When a new series is released, or a series stops appearing in coordinated
 releases, its phase changes by itself. Pre-releases (`-RC`, `-M`, `-beta`,
-`-alpha`, `-SNAPSHOT`) are ignored. No end-of-life dates are published or
-calculated.
+`-alpha`, `-SNAPSHOT`) and four-part tags such as `2.7.1.1` are ignored. No
+end-of-life dates are published or calculated.
 
 ## Output shape (schema v1)
 
 ```jsonc
 {
   "schema_version": 1,
-  "generated": "2026-10-19T10:15:00Z",
+  "generated": "2026-10-19T10:15:00Z",   // when the content last changed
   "series": [
     {
       "series": "3.0.x",
@@ -111,11 +113,13 @@ All requests are unauthenticated and read-only.
 
 ## How it is updated
 
-The workflow in `.github/workflows/update-versions.yml` runs
-`scripts/check_versions.py` and commits `versions.json` only if it changed.
-After a commit it purges the jsDelivr cache for that path.
+The workflow in `.github/workflows/update-versions.yml` runs the unit tests,
+then `scripts/check_versions.py`, and commits `versions.json` only if it
+changed. After a commit it purges the jsDelivr cache for that path. If either
+GitHub API request fails, the run fails and the published feed is left as it
+was; it is never published without its advisories.
 
-There are three triggers:
+There are three triggers on the default branch:
 
 1. **External cron (primary).** An outside scheduler sends an authenticated
    `repository_dispatch` event every 15 minutes, because GitHub's own scheduler
@@ -136,6 +140,18 @@ There are three triggers:
 
 A change to a release or an advisory reaches the feed within about 15 minutes
 when the external cron is running, plus up to about a minute for the CDN purge.
+
+`repository_dispatch` and the GitHub schedule only run on the default branch.
+The `alpha` branch regenerates its feed when its generator, tests or workflow are
+pushed, and on a manual run. To keep `alpha` fresh from an external scheduler
+too, call the workflow-dispatch endpoint instead, with the branch as the ref:
+
+```http
+POST https://api.github.com/repos/petersmythe/gs-updates-checker/actions/workflows/update-versions.yml/dispatches
+Authorization: Bearer <fine-grained-token>
+
+{"ref": "alpha"}
+```
 
 ## Privacy
 

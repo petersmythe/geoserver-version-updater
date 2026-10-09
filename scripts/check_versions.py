@@ -1,370 +1,402 @@
 #!/usr/bin/env python3
 """
-GeoServer version checker.
+GeoServer version feed generator (schema v1).
 
-Produces versions.json describing all recently active GeoServer release
-series, cross-referencing two sources:
+Reads public GeoServer release, security-advisory and blog data and writes
+versions.json: one entry per release series (with an inferred lifecycle phase)
+plus the published security advisories.
 
-  1. GitHub Releases (api.github.com) - fastest signal that a version
-     exists, but carries no reliable vulnerability information beyond
-     the coincidence of multiple series releasing at once.
-  2. geoserver.org blog posts (raw.githubusercontent.com/geoserver/
-     geoserver.github.io, _posts/*.md) - authoritative for security
-     content: frontmatter categories include "Vulnerability" and the
-     body lists GEOS-xxxx / CVE-xxxx-xxxxx identifiers under a
-     "Security Considerations" heading.
+All requests are unauthenticated and use a generic User-Agent. The script runs
+on GitHub-hosted runners and has no dependency beyond the Python standard
+library.
 
-Design notes:
-  - All HTTP requests are unauthenticated. No token is used, no
-    identifying User-Agent beyond a generic project string, so GitHub's
-    access logs cannot associate requests with any particular
-    organisation. This script is intended to run on GitHub Actions'
-    own runners, so from GitHub's point of view the traffic originates
-    from GitHub infrastructure, not from any requester-identifiable
-    network.
-  - This script only ever reads public release/blog data. It has
-    nothing to do with the (separate, opt-in, not-yet-built) mechanism
-    for instances to self-report their running version.
-  - Output is intentionally conservative: if blog confirmation for a
-    version is not yet available, the release is still listed with
-    security_confirmed: false rather than omitted, so a client never
-    silently misses a security release just because the blog post
-    lagged behind GitHub.
+Phase inference (no configuration file):
+  1. Group proper releases into events: releases within 24 hours of the
+     earliest release in the group.
+  2. The most recent event containing two or more series is the coordinated
+     event. Its N distinct series are the maintained set.
+  3. Series newer than anything in that set (for example a new series released
+     on its own) join the pool. The top N of the pool by version are active:
+     the highest is "stable", the rest "maintenance". Every other series is
+     "archive". A new series therefore displaces the oldest maintained one.
+  4. With no coordinated event at all: highest = stable, next = maintenance,
+     the rest archive.
 """
 
 import json
 import re
 import sys
 import time
-import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple
 
-GITHUB_API = "https://api.github.com/repos/geoserver/geoserver/releases?per_page=40"
-GITHUB_ADVISORIES = "https://api.github.com/repos/geoserver/geoserver/security-advisories?per_page=40"
+GITHUB_RELEASES = "https://api.github.com/repos/geoserver/geoserver/releases?per_page=100"
+GITHUB_ADVISORIES = "https://api.github.com/repos/geoserver/geoserver/security-advisories?per_page=100"
 BLOG_POSTS_API = "https://api.github.com/repos/geoserver/geoserver.github.io/contents/_posts"
 RAW_POST_BASE = "https://raw.githubusercontent.com/geoserver/geoserver.github.io/main/_posts/"
 
-USER_AGENT = "geoserver-version-checker/1.0 (+https://geoserver.org)"
-SCRIPT_DIR = Path(__file__).parent
-SERIES_CONFIG = SCRIPT_DIR / "series.json"
-OUTPUT_PATH = SCRIPT_DIR.parent / "versions.json"
+USER_AGENT = "gs-updates-checker-feed"
+OUTPUT_PATH = Path(__file__).resolve().parent.parent / "versions.json"
 
-# Only look at posts from the last N days when scanning the blog index,
-# to keep each run fast. Cross-checked against GitHub releases which
-# only report versions anyway, so this never causes a real release to
-# be missed - it just limits how far back we search for the matching post.
+SCHEMA_VERSION = 1
+COORDINATION_WINDOW = timedelta(hours=24)
 BLOG_LOOKBACK_DAYS = 240
+MAX_ADVISORY_PAGES = 3
 
-VERSION_RE = re.compile(r"^(\d+)\.(\d+)(?:\.(\d+))?(-RC\d*)?$")
+RELEASE_TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
+PATCHED_TOKEN_RE = re.compile(r"(?<![\d.])(\d+)\.(\d+)\.(\d+)(?![\d.])")
 CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}")
-GEOS_RE = re.compile(r"GEOS-\d+")
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
 
-def http_get_json(url, retries=3, backoff=2.0):
-    req = urllib.request.Request(url, headers={
-        "User-Agent": USER_AGENT,
-        "Accept": "application/vnd.github+json",
-    })
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            if e.code == 403 and "rate limit" in e.read().decode("utf-8", "ignore").lower():
-                raise RuntimeError(
-                    "GitHub rate limit hit on unauthenticated request. "
-                    "This script deliberately runs unauthenticated for "
-                    "privacy reasons; if this becomes a persistent problem, "
-                    "reduce poll frequency rather than adding a token."
-                )
-            if attempt == retries - 1:
-                raise
-            time.sleep(backoff * (attempt + 1))
-        except (urllib.error.URLError, TimeoutError):
-            if attempt == retries - 1:
-                raise
-            time.sleep(backoff * (attempt + 1))
-    return None
+class Release(NamedTuple):
+    version: str
+    major: int
+    minor: int
+    patch: int
+    published: datetime
+    published_at: str
+    url: str
+
+    @property
+    def series(self):
+        return (self.major, self.minor)
 
 
-def http_get_text(url, retries=3, backoff=2.0):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                return resp.read().decode("utf-8")
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None
-            if attempt == retries - 1:
-                raise
-            time.sleep(backoff * (attempt + 1))
-        except (urllib.error.URLError, TimeoutError):
-            if attempt == retries - 1:
-                raise
-            time.sleep(backoff * (attempt + 1))
-    return None
+def series_name(series):
+    return f"{series[0]}.{series[1]}.x"
 
 
-def parse_version_tag(tag):
-    """Normalize a GitHub release tag to (series, version, is_rc)."""
-    tag = tag.lstrip("v")
-    m = VERSION_RE.match(tag)
-    if not m:
+def parse_timestamp(value):
+    return datetime.strptime(value, TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
+
+
+def parse_release(raw):
+    """A proper release only: MAJOR.MINOR.PATCH, not a draft. RCs, milestones and
+    four-part tags such as 2.7.1.1 are ignored."""
+    if raw.get("draft") or not raw.get("published_at"):
         return None
-    major, minor, patch, rc = m.groups()
-    series = f"{major}.{minor}.x"
-    version = tag
-    return series, version, bool(rc)
+    match = RELEASE_TAG_RE.match(raw.get("tag_name", ""))
+    if not match:
+        return None
+    major, minor, patch = (int(g) for g in match.groups())
+    return Release(
+        version=f"{major}.{minor}.{patch}",
+        major=major,
+        minor=minor,
+        patch=patch,
+        published=parse_timestamp(raw["published_at"]),
+        published_at=raw["published_at"],
+        url=raw.get("html_url") or "",
+    )
 
 
-def fetch_github_releases():
-    """Fastest source: what versions exist right now, and when."""
-    data = http_get_json(GITHUB_API)
-    releases = []
-    for r in data:
-        if r.get("draft"):
-            continue
-        parsed = parse_version_tag(r["tag_name"])
-        if not parsed:
-            continue
-        series, version, is_rc = parsed
-        releases.append({
-            "series": series,
-            "version": version,
-            "is_rc": is_rc,
-            "published_at": r.get("published_at"),
-            "release_url": r.get("html_url"),
-            "prerelease": r.get("prerelease", False),
-        })
-    return releases
+def cluster_releases(releases):
+    """Group releases into events. A window opens at its earliest release and
+    takes every release within COORDINATION_WINDOW of it."""
+    clusters = []
+    current = []
+    for release in sorted(releases, key=lambda r: r.published):
+        if current and release.published - current[0].published > COORDINATION_WINDOW:
+            clusters.append(current)
+            current = []
+        current.append(release)
+    if current:
+        clusters.append(current)
+    return clusters
 
 
-def fetch_github_advisories():
-    """Cross-check source for CVE IDs, independent of blog post timing."""
-    try:
-        data = http_get_json(GITHUB_ADVISORIES)
-    except Exception:
-        return []
-    advisories = []
-    for a in data or []:
-        advisories.append({
-            "ghsa_id": a.get("ghsa_id"),
-            "cve_id": a.get("cve_id"),
-            "summary": a.get("summary"),
-            "severity": a.get("severity"),
-            "published_at": a.get("published_at"),
-            "vulnerable_versions": [
-                v.get("vulnerable_version_range")
-                for v in a.get("vulnerabilities", []) or []
-            ],
-        })
+def is_coordinated(cluster):
+    return len({r.series for r in cluster}) >= 2
+
+
+def infer_phases(releases):
+    """Return {series tuple: phase}."""
+    all_series = {r.series for r in releases}
+    if not all_series:
+        return {}
+    coordinated = [c for c in cluster_releases(releases) if is_coordinated(c)]
+    if coordinated:
+        members = {r.series for r in coordinated[-1]}
+        size = len(members)
+        pool = members | {s for s in all_series if s > max(members)}
+    else:
+        size = 2
+        pool = all_series
+    active = sorted(pool, reverse=True)[:size]
+    phases = {}
+    for series in all_series:
+        if series not in active:
+            phases[series] = "archive"
+        elif series == active[0]:
+            phases[series] = "stable"
+        else:
+            phases[series] = "maintenance"
+    return phases
+
+
+def synchronized_versions(releases):
+    """Versions that were released inside any coordinated event."""
+    result = set()
+    for cluster in cluster_releases(releases):
+        if is_coordinated(cluster):
+            result.update(r.version for r in cluster)
+    return result
+
+
+def latest_per_series(releases):
+    latest = {}
+    for release in releases:
+        current = latest.get(release.series)
+        if current is None or release.patch > current.patch:
+            latest[release.series] = release
+    return latest
+
+
+def derive_patched_versions(vulnerabilities):
+    """Map series to the lowest patched version found across all entries."""
+    best = {}
+    for vulnerability in vulnerabilities or []:
+        for match in PATCHED_TOKEN_RE.finditer(vulnerability.get("patched_versions") or ""):
+            version = tuple(int(g) for g in match.groups())
+            series = version[:2]
+            if series not in best or version < best[series]:
+                best[series] = version
+    return {
+        series_name(series): ".".join(str(part) for part in version)
+        for series, version in sorted(best.items(), reverse=True)
+    }
+
+
+def transform_advisory(raw):
+    ranges = []
+    for vulnerability in raw.get("vulnerabilities") or []:
+        version_range = vulnerability.get("vulnerable_version_range")
+        if version_range and version_range not in ranges:
+            ranges.append(version_range)
+    return {
+        "ghsa_id": raw.get("ghsa_id"),
+        "cve_id": raw.get("cve_id"),
+        "summary": raw.get("summary"),
+        "severity": (raw.get("severity") or "unknown").lower(),
+        "published_at": raw.get("published_at"),
+        "vulnerable_versions": ranges,
+        "patched_versions": derive_patched_versions(raw.get("vulnerabilities")),
+    }
+
+
+def transform_advisories(raw_advisories):
+    advisories = [transform_advisory(a) for a in raw_advisories]
+    advisories.sort(key=lambda a: a["ghsa_id"] or "")
+    advisories.sort(key=lambda a: a["published_at"] or "", reverse=True)
     return advisories
 
 
-def fetch_blog_post_index():
-    """List recent _posts filenames without downloading every post body."""
-    listing = http_get_json(BLOG_POSTS_API)
-    cutoff = time.time() - BLOG_LOOKBACK_DAYS * 86400
-    names = []
-    for entry in listing:
-        name = entry.get("name", "")
-        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})-.*\.md$", name)
-        if not m:
-            continue
+def build_series_entries(releases, blog_lookup, previous_entries):
+    phases = infer_phases(releases)
+    latest = latest_per_series(releases)
+    synchronized = synchronized_versions(releases)
+    previous = {(e["series"], e["latest_version"]): e for e in previous_entries}
+    phase_order = {"stable": 0, "maintenance": 1, "archive": 2}
+
+    entries = []
+    for series in sorted(latest, key=lambda s: (phase_order[phases[s]], -s[0], -s[1])):
+        release = latest[series]
+        known = previous.get((series_name(series), release.version))
+        if known and known.get("blog_confirmed"):
+            blog = {key: known[key] for key in ("blog_confirmed", "blog_url", "security_flagged", "cve_ids")}
+        else:
+            blog = blog_lookup(release) or {
+                "blog_confirmed": False,
+                "blog_url": None,
+                "security_flagged": False,
+                "cve_ids": [],
+            }
+        entries.append(
+            {
+                "series": series_name(series),
+                "phase": phases[series],
+                "latest_version": release.version,
+                "published_at": release.published_at,
+                "release_url": release.url,
+                "blog_confirmed": blog["blog_confirmed"],
+                "blog_url": blog["blog_url"],
+                "security_flagged": blog["security_flagged"],
+                "synchronized_release": release.version in synchronized,
+                "cve_ids": blog["cve_ids"],
+            }
+        )
+    return entries
+
+
+def build_feed(releases, raw_advisories, blog_lookup, previous, now):
+    """previous is the prior feed (or None). `generated` only moves when the
+    content changes, so an unchanged feed produces no commit."""
+    previous_entries = (previous or {}).get("series") or []
+    feed = {
+        "schema_version": SCHEMA_VERSION,
+        "generated": None,
+        "series": build_series_entries(releases, blog_lookup, previous_entries),
+        "advisories": transform_advisories(raw_advisories),
+    }
+    if previous and {k: v for k, v in previous.items() if k != "generated"} == {
+        k: v for k, v in feed.items() if k != "generated"
+    }:
+        feed["generated"] = previous["generated"]
+    else:
+        feed["generated"] = now.strftime(TIMESTAMP_FORMAT)
+    return feed
+
+
+def http_get(url, accept, retries=3, backoff=2.0, allow_404=False):
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": accept})
+    for attempt in range(retries):
         try:
-            post_date = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=timezone.utc)
-        except ValueError:
-            continue
-        if post_date.timestamp() >= cutoff:
-            names.append(name)
-    return names
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return response.read().decode("utf-8")
+        except urllib.error.HTTPError as error:
+            if allow_404 and error.code == 404:
+                return None
+            if error.code == 403 and "rate limit" in error.read().decode("utf-8", "ignore").lower():
+                raise RuntimeError(
+                    "GitHub rate limit hit on an unauthenticated request. The script is "
+                    "deliberately unauthenticated; reduce the run frequency instead of adding a token."
+                )
+            if attempt == retries - 1:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == retries - 1:
+                raise
+        time.sleep(backoff * (attempt + 1))
+    return None
 
 
-def parse_frontmatter(md_text):
-    """Very small YAML-frontmatter parser, good enough for this fixed schema."""
-    if not md_text.startswith("---"):
-        return {}, md_text
-    parts = md_text.split("---", 2)
+def http_get_json(url):
+    return json.loads(http_get(url, "application/vnd.github+json"))
+
+
+def fetch_releases():
+    releases = []
+    for raw in http_get_json(GITHUB_RELEASES):
+        release = parse_release(raw)
+        if release:
+            releases.append(release)
+    return releases
+
+
+def fetch_raw_advisories():
+    """Any failure aborts the run: a feed whose advisories silently vanished
+    would stop warning every client."""
+    advisories = []
+    for page in range(1, MAX_ADVISORY_PAGES + 1):
+        batch = http_get_json(f"{GITHUB_ADVISORIES}&page={page}")
+        advisories.extend(batch)
+        if len(batch) < 100:
+            break
+    return advisories
+
+
+def parse_frontmatter(markdown):
+    if not markdown.startswith("---"):
+        return {}, markdown
+    parts = markdown.split("---", 2)
     if len(parts) < 3:
-        return {}, md_text
-    raw_fm, body = parts[1], parts[2]
-    fm = {}
+        return {}, markdown
     categories = []
     in_categories = False
-    for line in raw_fm.splitlines():
+    for line in parts[1].splitlines():
         stripped = line.strip()
         if stripped.startswith("categories:"):
             in_categories = True
-            continue
-        if in_categories:
-            if stripped.startswith("- "):
-                categories.append(stripped[2:].strip())
-                continue
-            else:
-                in_categories = False
-        if ":" in stripped and not stripped.startswith("-"):
-            key, _, val = stripped.partition(":")
-            fm[key.strip()] = val.strip().strip('"')
-    if categories:
-        fm["categories"] = categories
-    return fm, body
+        elif in_categories and stripped.startswith("- "):
+            categories.append(stripped[2:].strip().lower())
+        elif in_categories:
+            in_categories = False
+    return {"categories": categories}, parts[2]
 
 
-def match_blog_post_for_version(version, post_names):
-    """geoserver-X-Y-Z-released.md naming convention."""
-    dotted = version.replace(".", "-").lower()
-    candidates = [n for n in post_names if f"geoserver-{dotted}-released" in n.lower()]
-    return candidates[0] if candidates else None
-
-
-def extract_security_info(body):
-    cves = sorted(set(CVE_RE.findall(body)))
-    geos_ids = sorted(set(GEOS_RE.findall(body)))
-    has_section = "Security Considerations" in body
-    return {
-        "cve_ids": cves,
-        "geos_ids": geos_ids,
-        "has_security_section": has_section,
-    }
-
-
-def load_series_config():
-    with open(SERIES_CONFIG) as f:
-        return json.load(f)["series"]
-
-
-def build_blog_url(post_filename, categories, frontmatter):
-    """
-    Reconstruct the public geoserver.org URL for a _posts/YYYY-MM-DD-slug.md
-    file. Jekyll's URL scheme is /<category-path>/<year>/<month>/<day>/<slug>.html,
-    with categories lowercased and joined by '/'. We saw both plain
-    "announcements" posts and "announcements/vulnerability" posts in the
-    wild, so use whatever categories the post itself declares (falling back
-    to "announcements" if none are usable) rather than hardcoding one path.
-    """
-    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})-(.+)\.md$", post_filename)
-    if not m:
+def build_blog_url(post_filename, categories):
+    match = re.match(r"^(\d{4})-(\d{2})-(\d{2})-(.+)\.md$", post_filename)
+    if not match:
         return None
-    year, month, day, slug = m.groups()
-    usable_categories = [c for c in categories if c not in ("release",)] or ["announcements"]
-    category_path = "/".join(c.lower() for c in usable_categories)
-    return f"https://geoserver.org/{category_path}/{year}/{month}/{day}/{slug}.html"
+    year, month, day, slug = match.groups()
+    usable = [c for c in categories if c != "release"] or ["announcements"]
+    return f"https://geoserver.org/{'/'.join(usable)}/{year}/{month}/{day}/{slug}.html"
 
 
-def series_status_for(series_id, series_config):
-    for s in series_config:
-        if s["series"] == series_id:
-            return s["status"], s.get("eol")
-    return "unknown", None
+class BlogLookup:
+    """Finds the blog post for a release. The post index is fetched at most once
+    per run, and only when a recent release has no confirmed post yet."""
 
+    def __init__(self, now):
+        self.now = now
+        self.names = None
 
-def build_report():
-    releases = fetch_github_releases()
-    advisories = fetch_github_advisories()
-    post_names = fetch_blog_post_index()
-    series_config = load_series_config()
+    def _index(self):
+        if self.names is None:
+            cutoff = self.now - timedelta(days=BLOG_LOOKBACK_DAYS)
+            self.names = []
+            for entry in http_get_json(BLOG_POSTS_API):
+                name = entry.get("name", "")
+                match = re.match(r"^(\d{4})-(\d{2})-(\d{2})-.*\.md$", name)
+                if match:
+                    posted = datetime(*(int(g) for g in match.groups()), tzinfo=timezone.utc)
+                    if posted >= cutoff:
+                        self.names.append(name)
+        return self.names
 
-    # group by series -> list of releases, to detect simultaneous
-    # multi-series releases (same published date/day across series)
-    by_date = {}
-    for r in releases:
-        day = (r["published_at"] or "")[:10]
-        by_date.setdefault(day, []).append(r["series"])
-
-    cve_by_version_hint = {}
-    for adv in advisories:
-        for vr in adv["vulnerable_versions"]:
-            if vr:
-                cve_by_version_hint.setdefault(vr, []).append(adv["cve_id"])
-
-    versions_out = []
-    for r in releases:
-        day = (r["published_at"] or "")[:10]
-        coordinated = len(set(by_date.get(day, []))) > 1
-
-        post_name = match_blog_post_for_version(r["version"], post_names)
-        security = {
-            "cve_ids": [],
-            "geos_ids": [],
-            "has_security_section": False,
+    def __call__(self, release):
+        if self.now - release.published > timedelta(days=BLOG_LOOKBACK_DAYS):
+            return None
+        needle = f"geoserver-{release.version.replace('.', '-')}-released"
+        matches = [n for n in self._index() if needle in n.lower()]
+        if not matches:
+            return None
+        body = http_get(RAW_POST_BASE + matches[0], "text/plain", allow_404=True)
+        if body is None:
+            return None
+        frontmatter, text = parse_frontmatter(body)
+        categories = frontmatter.get("categories", [])
+        cve_ids = sorted(set(CVE_RE.findall(text)))
+        return {
+            "blog_confirmed": True,
+            "blog_url": build_blog_url(matches[0], categories),
+            "security_flagged": bool(
+                cve_ids or "vulnerability" in categories or "Security Considerations" in text
+            ),
+            "cve_ids": cve_ids,
         }
-        blog_url = None
-        blog_confirmed = False
 
-        if post_name:
-            raw = http_get_text(RAW_POST_BASE + post_name)
-            if raw:
-                fm, body = parse_frontmatter(raw)
-                security = extract_security_info(body)
-                categories = [c.lower() for c in fm.get("categories", [])]
-                if "vulnerability" in categories:
-                    security["has_security_section"] = True
-                blog_confirmed = True
-                blog_url = build_blog_url(post_name, categories, fm)
 
-        status, eol = series_status_for(r["series"], series_config)
-
-        versions_out.append({
-            "series": r["series"],
-            "version": r["version"],
-            "is_release_candidate": r["is_rc"],
-            "series_status": status,
-            "series_eol": eol,
-            "published_at": r["published_at"],
-            "release_url": r["release_url"],
-            "blog_confirmed": blog_confirmed,
-            "blog_url": blog_url,
-            "security": {
-                "flagged": security["has_security_section"] or bool(security["cve_ids"]),
-                "cve_ids": security["cve_ids"],
-                "geos_ids": security["geos_ids"],
-                "pending_blog_confirmation": not blog_confirmed,
-            },
-            "probable_coordinated_security_release": coordinated,
-        })
-
-    versions_out.sort(key=lambda v: v["published_at"] or "", reverse=True)
-
-    latest_per_series = {}
-    for v in versions_out:
-        if v["is_release_candidate"]:
-            continue
-        s = v["series"]
-        if s not in latest_per_series or v["published_at"] > latest_per_series[s]["published_at"]:
-            latest_per_series[s] = v
-
-    report = {
-        "schema_version": 1,
-        "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source_note": (
-            "Generated by an unauthenticated, anonymous checker run on GitHub "
-            "Actions infrastructure. No requester identity is logged by this "
-            "process; GitHub release and blog data are both public. This feed "
-            "has no connection to any per-instance version reporting mechanism."
-        ),
-        "latest_by_series": {
-            s: {"version": v["version"], "published_at": v["published_at"]}
-            for s, v in latest_per_series.items()
-        },
-        "versions": versions_out,
-        "advisories": advisories,
-    }
-    return report
+def load_previous():
+    if not OUTPUT_PATH.exists():
+        return None
+    try:
+        previous = json.loads(OUTPUT_PATH.read_text())
+    except ValueError:
+        return None
+    if previous.get("schema_version") != SCHEMA_VERSION or "series" not in previous:
+        return None
+    return previous
 
 
 def main():
+    now = datetime.now(timezone.utc)
     try:
-        report = build_report()
-    except Exception as e:
-        print(f"ERROR: version check failed: {e}", file=sys.stderr)
+        feed = build_feed(
+            fetch_releases(), fetch_raw_advisories(), BlogLookup(now), load_previous(), now
+        )
+    except Exception as error:
+        print(f"ERROR: version check failed: {error}", file=sys.stderr)
         sys.exit(1)
 
-    OUTPUT_PATH.write_text(json.dumps(report, indent=2) + "\n")
-    print(f"Wrote {OUTPUT_PATH} with {len(report['versions'])} version entries "
-          f"across {len(report['latest_by_series'])} series.")
+    text = json.dumps(feed, indent=2) + "\n"
+    if not OUTPUT_PATH.exists() or OUTPUT_PATH.read_text() != text:
+        OUTPUT_PATH.write_text(text)
+    print(f"{len(feed['series'])} series, {len(feed['advisories'])} advisories, generated {feed['generated']}")
 
 
 if __name__ == "__main__":

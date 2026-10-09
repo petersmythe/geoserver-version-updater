@@ -1,23 +1,32 @@
 name: Update GeoServer version feed
 
 on:
+  # Primary trigger: an external scheduler sends an authenticated
+  # repository_dispatch event every 15 minutes, because GitHub's own scheduler
+  # is unreliable under load. repository_dispatch and schedule only ever run
+  # on the default branch.
+  repository_dispatch:
+    types: [update-versions]
+  # Fallback. Offset minutes avoid the :00/:15/:30/:45 herd times.
   schedule:
-    # Every 15 minutes, offset from the top of the hour. GitHub Releases
-    # land ~1hr ahead of blog confirmation per PSC observation, so this is
-    # frequent enough to catch a new release within minutes while staying
-    # well under the unauthenticated 60 req/hour GitHub API limit (this
-    # run uses ~3-10 requests depending on how many new blog posts need
-    # fetching). Offset minutes (7/22/37/52) avoid the :00/:15/:30/:45
-    # herd times when GitHub Actions scheduling load is highest and
-    # scheduled runs are most likely to be delayed or dropped.
     - cron: '7,22,37,52 * * * *'
-  workflow_dispatch: {}   # manual trigger button in the Actions UI
+  # Manual run from the Actions tab, or via the REST API with "ref": "alpha"
+  # to regenerate the alpha feed.
+  workflow_dispatch: {}
+  # The alpha branch is not reached by the triggers above, so regenerate it
+  # whenever its generator or tests change.
+  push:
+    branches: [alpha]
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/update-versions.yml'
 
 permissions:
   contents: write
 
 concurrency:
-  group: update-versions
+  group: update-versions-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -26,23 +35,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Shallow, single branch - we only need to commit one file back.
-          # (Sparse-checkout of just scripts/ would trim this further,
-          # but this repo is tiny enough that it's not worth the added
-          # complexity - checkout is already ~2s here.)
           fetch-depth: 1
 
-      # No actions/setup-python step: ubuntu-latest ships a recent
-      # Python 3 already, and setup-python's own overhead (downloading
-      # and unpacking a hermetic build) is often bigger than the time
-      # this whole script takes to run. If a specific interpreter
-      # version ever becomes necessary, reintroduce setup-python with
-      # its cache: 'pip' option - not needed here since we have zero
-      # third-party dependencies.
-      - name: Run version checker
+      - name: Run tests
+        run: python3 -m unittest discover -s tests
+
+      - name: Generate versions.json
         run: python3 scripts/check_versions.py
 
-      - name: Commit updated versions.json if changed
+      - name: Commit versions.json if changed
         id: commit
         run: |
           if git diff --quiet -- versions.json; then
@@ -50,7 +51,7 @@ jobs:
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          git config user.name "geoserver-version-bot"
+          git config user.name "gs-updates-checker-bot"
           git config user.email "actions@users.noreply.github.com"
           git add versions.json
           git commit -m "Update versions.json [automated]"
@@ -60,15 +61,9 @@ jobs:
       - name: Purge jsDelivr cache
         if: steps.commit.outputs.changed == 'true'
         run: |
-          # jsDelivr fronts GitHub with its own CDN cache that does NOT
-          # auto-invalidate on push. Without this, clients can keep
-          # receiving a stale versions.json for hours after a real
-          # (possibly security-relevant) release has already landed.
-          # This is unauthenticated and rate-limited per-IP by jsDelivr,
-          # not by us - fine at this call frequency (max once per 15 min).
-          repo="${GITHUB_REPOSITORY}"
-          branch="${GITHUB_REF_NAME}"
-          url="https://purge.jsdelivr.net/gh/${repo}@${branch}/versions.json"
+          # jsDelivr does not notice a new commit by itself. Without this a
+          # client could keep receiving a stale feed for hours.
+          url="https://purge.jsdelivr.net/gh/${GITHUB_REPOSITORY}@${GITHUB_REF_NAME}/versions.json"
           echo "Purging: $url"
           for attempt in 1 2 3; do
             status=$(curl -s -o /tmp/purge_response.json -w "%{http_code}" "$url")
@@ -80,7 +75,5 @@ jobs:
             fi
             sleep 5
           done
-          # Don't fail the whole workflow over a purge hiccup - the
-          # commit already succeeded and the cache will still expire on
-          # its own TTL. Just make the miss visible in the run log.
+          # The commit already succeeded and the cache expires on its own TTL.
           echo "::warning::jsDelivr purge did not return 200 after 3 attempts; relying on TTL expiry instead."
