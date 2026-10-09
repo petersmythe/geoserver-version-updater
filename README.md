@@ -1,120 +1,154 @@
-# GeoServer version feed
+# gs-updates-checker
 
-A small, PSC-run background job that publishes a machine-readable summary
-of recent GeoServer releases across all active series, so that any
-GeoServer instance (or monitoring tool) can check whether it's up to
-date and whether a security release is relevant to it.
+A machine-readable feed of GeoServer releases and security advisories, and the
+job that generates it. It is the data source for the GeoServer
+`updates-checker` community module (Maven artifactId `gs-updates-checker`),
+which tells a GeoServer administrator when a newer version, a new release
+series, or a relevant security advisory is available.
 
-## Why this exists
+The feed is generated automatically from public sources. No one has to edit it
+by hand.
 
-- GitHub Releases for `geoserver/geoserver` are usually the first public
-  signal a new version exists, but by themselves carry no reliable
-  indication of whether a release addresses a security vulnerability.
-- The [geoserver.org blog](https://geoserver.org/blog) is the
-  authoritative source for that: release posts carry a `Vulnerability`
-  category and list `GEOS-xxxx` / `CVE-xxxx-xxxxx` identifiers under a
-  "Security Considerations" heading — but posts typically follow the
-  GitHub release by roughly an hour.
-- GeoServer maintains multiple concurrent series (currently a stable,
-  a maintenance, and sometimes an archived series still receiving
-  security-only backports — see the
-  [release schedule](https://github.com/geoserver/geoserver/wiki/Release-Schedule)).
-  A client needs to know the latest version *for its own series*, not
-  just the single newest tag overall.
+> **Status: alpha.** The feed and its generator are under development on the
+> `alpha` branch, so the format may still change. This repository was formerly
+> named `geoserver-version-updater`.
 
-This job merges both sources every 15 minutes and publishes a single
-`versions.json`, so consumers don't need to know about any of the above
-— they just read the feed.
+## Feed URLs
 
-## Privacy model
+| Branch | URL | Use |
+|---|---|---|
+| `main` | `https://cdn.jsdelivr.net/gh/petersmythe/gs-updates-checker@main/versions.json` | Default for the plugin |
+| `alpha` | `https://cdn.jsdelivr.net/gh/petersmythe/gs-updates-checker@alpha/versions.json` | Development and testing |
 
-This is deliberately a **one-way, read-only, anonymous** pipeline:
+**Use branch URLs only.** jsDelivr caches tag URLs (`@v1`) indefinitely and
+ignores purge requests for them, so a tag would serve a stale feed for ever.
+Compatibility is signalled by the `schema_version` field inside the JSON, not by
+the URL.
 
-- All requests to the GitHub API are unauthenticated (no token), so
-  nothing ties them to any particular AfriGIS, PSC, or individual
-  identity.
-- The job runs on GitHub-hosted Actions runners, so from GitHub's
-  point of view the traffic against `api.github.com` originates from
-  GitHub's own infrastructure, not from any externally-identifiable
-  network.
-- The output file is served from a public repo via
-  [jsDelivr](https://www.jsdelivr.com/) rather than directly from
-  GitHub Pages or the API, so **nobody — including the GeoServer
-  project itself — can see which organisations, IPs, or instances are
-  checking for updates.** jsDelivr's own logs are the only place any
-  request trace exists, and it's a well-known CDN, not project
-  infrastructure.
+## What the feed tells you
 
-This is intentionally separate from (and not a prerequisite for) any
-future opt-in mechanism that lets an instance self-report its running
-version — that would be a distinct, explicitly-consented pipeline, not
-bolted onto this one.
+- The **latest patch of every release series**, and the series' **phase**:
+  `stable`, `maintenance` or `archive`.
+- Whether a release was part of a **coordinated multi-series release**, which is
+  a strong early sign of a security release.
+- **Security advisories** (GHSA/CVE), with the affected version ranges and the
+  first patched version per series.
 
-## Consuming the feed
+### How the phase is inferred
 
-```
-https://cdn.jsdelivr.net/gh/<org>/<repo>@<branch>/versions.json
-```
+Phase is never configured. It is derived from the release history:
 
-jsDelivr caches aggressively at the edge and does **not** automatically
-notice a new commit — without intervention, clients could keep getting
-a stale (possibly pre-security-fix) `versions.json` for hours. To avoid
-that, the workflow purges jsDelivr's cache for this exact path
-immediately after every commit that actually changes `versions.json`:
+1. Releases are grouped into events: releases whose publish times fall within
+   24 hours of each other.
+2. The most recent event that contains two or more series defines the
+   **actively maintained set**.
+3. The highest series in that set is `stable`; the others in it are
+   `maintenance`.
+4. Every other series is `archive`.
 
-```
-POST https://purge.jsdelivr.net/gh/<org>/<repo>@<branch>/versions.json
-```
+When a new series is released, or a series stops appearing in coordinated
+releases, its phase changes by itself. Pre-releases (`-RC`, `-M`, `-beta`,
+`-alpha`, `-SNAPSHOT`) are ignored. No end-of-life dates are published or
+calculated.
 
-This is unauthenticated, takes effect across jsDelivr's edges within
-roughly a minute, and is retried a few times on transient failure. If
-it still fails, the workflow logs a warning but does not fail the run
-— the commit has already succeeded, and the CDN will fall back to
-expiring the entry on its normal TTL. In practice this means a client
-polling the jsDelivr URL should see a new release reflected within
-about a minute of the commit landing, not hours later.
-
-### Output shape
+## Output shape (schema v1)
 
 ```jsonc
 {
   "schema_version": 1,
-  "checked_at": "2026-08-14T10:15:00Z",
-  "latest_by_series": {
-    "3.0.x":  { "version": "3.0.1",  "published_at": "..." },
-    "2.28.x": { "version": "2.28.5", "published_at": "..." },
-    "2.27.x": { "version": "2.27.6", "published_at": "..." }
-  },
-  "versions": [
+  "generated": "2026-10-19T10:15:00Z",
+  "series": [
     {
       "series": "3.0.x",
-      "version": "3.0.1",
-      "series_status": "stable",       // stable | maintenance | archived
-      "series_eol": "2027-04",
-      "published_at": "...",
-      "release_url": "https://github.com/geoserver/geoserver/releases/tag/3.0.1",
+      "phase": "stable",                  // stable | maintenance | archive
+      "latest_version": "3.0.2",
+      "published_at": "2026-10-19T09:02:11Z",
+      "release_url": "https://github.com/geoserver/geoserver/releases/tag/3.0.2",
       "blog_confirmed": true,
-      "blog_url": "https://geoserver.org/announcements/vulnerability/...",
-      "security": {
-        "flagged": true,
-        "cve_ids": ["CVE-2026-11111"],
-        "geos_ids": ["GEOS-12200"],
-        "pending_blog_confirmation": false
-      },
-      "probable_coordinated_security_release": true
+      "blog_url": "https://geoserver.org/announcements/...",
+      "security_flagged": true,
+      "synchronized_release": true,       // released within 24h of another series
+      "cve_ids": ["CVE-2026-00000"]
     }
   ],
-  "advisories": [ /* raw GHSA entries, cross-reference */ ]
+  "advisories": [
+    {
+      "ghsa_id": "GHSA-xxxx-xxxx-xxxx",
+      "cve_id": "CVE-2026-00000",         // null until assigned
+      "summary": "...",
+      "severity": "critical",             // critical | high | medium | low
+      "published_at": "2026-10-19T12:00:00Z",
+      "vulnerable_versions": [">= 2.28.0", "3.0.0"],
+      "patched_versions": { "3.0.x": "3.0.1", "2.28.x": "2.28.5" }
+    }
+  ]
 }
 ```
 
-`pending_blog_confirmation: true` means GitHub shows the release but
-the matching blog post hasn't been indexed yet — treat this as "update
-available, security relevance not yet confirmed" rather than "no
-security issue." `probable_coordinated_security_release: true` means
-multiple series released on the same day, which historically has
-correlated with a shared security fix even before the blog post
-confirms it explicitly.
+Notes for anyone consuming the feed directly:
+
+- Check `schema_version` first and refuse a version you do not understand.
+- Compare versions numerically, never as strings (`2.9` is older than `2.10`).
+- `vulnerable_versions` strings are copied verbatim from GitHub and are **not**
+  validated. They can be ambiguous (a bare `3.0.0`), impossible (an empty
+  range), or not versions at all (a commit hash). Do not silently ignore an
+  advisory you cannot parse; ask a human to review it.
+- `patched_versions` may be `{}` when GitHub gives no usable data.
+- `blog_confirmed: false` means the GitHub release exists but the matching
+  geoserver.org post has not appeared yet. It does not mean "not a security
+  release".
+- Treat all strings in the feed as untrusted input.
+
+## Where the data comes from
+
+All requests are unauthenticated and read-only.
+
+| Source | Used for |
+|---|---|
+| GitHub Releases, `geoserver/geoserver` | Versions, publish times, release URLs |
+| GitHub Security Advisories, `geoserver/geoserver` | GHSA/CVE ids, severity, version ranges, patched versions |
+| `geoserver/geoserver.github.io` blog posts | Confirming a release and finding CVE ids in its post |
+
+## How it is updated
+
+The workflow in `.github/workflows/update-versions.yml` runs
+`scripts/check_versions.py` and commits `versions.json` only if it changed.
+After a commit it purges the jsDelivr cache for that path.
+
+There are three triggers:
+
+1. **External cron (primary).** An outside scheduler sends an authenticated
+   `repository_dispatch` event every 15 minutes, because GitHub's own scheduler
+   is unreliable under load.
+
+   ```http
+   POST https://api.github.com/repos/petersmythe/gs-updates-checker/dispatches
+   Authorization: Bearer <fine-grained-token>
+   Content-Type: application/json
+
+   {"event_type": "update-versions"}
+   ```
+
+   The token needs only **Actions: read and write** on this repository. Store
+   it in the scheduling service, never in this repository.
+2. **GitHub schedule (fallback).** Cron at minutes 7, 22, 37 and 52 of each hour.
+3. **Manual.** The **Run workflow** button in the Actions tab.
+
+A change to a release or an advisory reaches the feed within about 15 minutes
+when the external cron is running, plus up to about a minute for the CDN purge.
+
+## Privacy
+
+The feed is a one-way, anonymous pipeline.
+
+- The generator sends no token and no identifying header, and runs on
+  GitHub-hosted runners.
+- The plugin only downloads the feed. It never reports its version or any
+  identity, and there is no per-instance reporting mechanism in this project.
+- The feed is served by the [jsDelivr](https://www.jsdelivr.com/) CDN, not by
+  this project. jsDelivr is the only party that can see request logs for the
+  feed. This project has no connection to jsDelivr, no access to its logs, and
+  no way of knowing who downloads the feed.
 
 ## Running it yourself
 
@@ -122,12 +156,21 @@ confirms it explicitly.
 python3 scripts/check_versions.py
 ```
 
-Writes `versions.json` in the repo root. No dependencies beyond the
-Python 3 standard library.
+Writes `versions.json` to the repository root. It needs only the Python 3
+standard library and makes a handful of unauthenticated GitHub API requests, so
+do not run it in a tight loop (the limit is 60 requests per hour per address).
 
-## Series lifecycle configuration
+## Limitations
 
-`scripts/series.json` tracks which series is currently stable,
-maintenance, or archived. This changes roughly every six months and
-isn't reliably scrapeable from the wiki, so it's maintained by hand —
-update it when a series transitions, per the release schedule.
+- GitHub publishes a release up to about a day before its blog post. Until the
+  post appears the release is still listed, flagged as unconfirmed.
+- GitHub Security Advisories are sometimes published days or weeks after the fix.
+  `synchronized_release` is the earlier signal.
+- Only the most recent GitHub releases are read, so very old series may be
+  missing. A consumer must treat an unknown series as `archive`.
+- Java and Tomcat requirements, end-of-life dates and GeoTools or GeoWebCache
+  versions are not part of this feed.
+
+## License
+
+GNU General Public License, version 2 (GPL-2.0), the same license as GeoServer.
