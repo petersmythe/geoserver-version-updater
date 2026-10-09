@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated": "2026-10-09T18:15:49Z",
+  "generated": "2026-10-09T18:21:14Z",
   "series": [
     {
       "series": "3.0.x",
@@ -154,17 +154,6 @@
     }
   ],
   "advisories": [
-    {
-      "ghsa_id": "GHSA-cpc9-c4h3-2jwx",
-      "cve_id": null,
-      "summary": "RCE and secrets exfiltration via pull_request_target",
-      "severity": "critical",
-      "published_at": "2026-09-28T16:52:51Z",
-      "vulnerable_versions": [
-        "df11a650c650ff895977c5440427c239671ee649"
-      ],
-      "patched_versions": {}
-    },
     {
       "ghsa_id": "GHSA-jvpx-6qxg-whgc",
       "cve_id": "CVE-2026-76904",
