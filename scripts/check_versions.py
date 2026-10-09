@@ -48,6 +48,7 @@ MAX_ADVISORY_PAGES = 3
 
 RELEASE_TAG_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 PATCHED_TOKEN_RE = re.compile(r"(?<![\d.])(\d+)\.(\d+)\.(\d+)(?![\d.])")
+VERSION_IN_RANGE_RE = re.compile(r"\d+\.\d+")
 CVE_RE = re.compile(r"CVE-\d{4}-\d{4,7}")
 TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 
@@ -188,8 +189,17 @@ def transform_advisory(raw):
     }
 
 
+def applies_to_releases(advisory):
+    """False when every range is something other than a version (for example a
+    commit hash in the project's own CI): it can never match a running release.
+    An advisory with no ranges at all is kept, so a human can review it."""
+    ranges = advisory["vulnerable_versions"]
+    return not ranges or any(VERSION_IN_RANGE_RE.search(r) for r in ranges)
+
+
 def transform_advisories(raw_advisories):
     advisories = [transform_advisory(a) for a in raw_advisories]
+    advisories = [a for a in advisories if applies_to_releases(a)]
     advisories.sort(key=lambda a: a["ghsa_id"] or "")
     advisories.sort(key=lambda a: a["published_at"] or "", reverse=True)
     return advisories

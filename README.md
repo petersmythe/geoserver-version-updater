@@ -96,6 +96,9 @@ Notes for anyone consuming the feed directly:
   range), or not versions at all (a commit hash). Do not silently ignore an
   advisory you cannot parse; ask a human to review it.
 - `patched_versions` may be `{}` when GitHub gives no usable data.
+- An advisory whose only ranges are not versions (for example a commit hash in
+  the project's own CI) can never apply to a running release, so it is left out
+  of the feed.
 - `blog_confirmed: false` means the GitHub release exists but the matching
   geoserver.org post has not appeared yet. It does not mean "not a security
   release".

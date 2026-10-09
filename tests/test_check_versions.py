@@ -254,6 +254,27 @@ class AdvisoryTest(unittest.TestCase):
         self.assertEqual({}, advisory["patched_versions"])
         self.assertEqual("unknown", advisory["severity"])
 
+    def test_advisories_without_any_version_are_left_out(self):
+        def raw(ghsa, ranges):
+            return {
+                "ghsa_id": ghsa,
+                "published_at": "2026-01-01T00:00:00Z",
+                "vulnerabilities": [{"vulnerable_version_range": r} for r in ranges],
+            }
+
+        advisories = cv.transform_advisories(
+            [
+                raw("GHSA-sha", ["df11a650c650ff895977c5440427c239671ee649"]),
+                raw("GHSA-bare", ["3.0.0"]),
+                raw("GHSA-range", ["<= 2.26.3"]),
+                raw("GHSA-mixed", ["df11a650c650ff895977c5440427c239671ee649", ">= 2.28.0"]),
+                raw("GHSA-none", []),
+            ]
+        )
+        self.assertEqual(
+            ["GHSA-bare", "GHSA-mixed", "GHSA-none", "GHSA-range"], sorted(a["ghsa_id"] for a in advisories)
+        )
+
     def test_newest_first(self):
         advisories = cv.transform_advisories(
             [
