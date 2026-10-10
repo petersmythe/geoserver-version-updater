@@ -1,0 +1,6 @@
+# Changes to the generator, the independent validator, the tests and the
+# workflows must be reviewed by a code owner. Require code-owner review for
+# main in the repository settings.
+/scripts/   @petersmythe
+/tests/     @petersmythe
+/.github/   @petersmythe

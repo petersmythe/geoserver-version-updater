@@ -203,86 +203,110 @@ class SeriesEntriesTest(unittest.TestCase):
 class PatchedVersionsTest(unittest.TestCase):
     def test_one_entry_per_package_and_series(self):
         # Shape of GHSA-6jj6-gm7p-fcvv: several packages, one fixed version per series.
-        vulnerabilities = []
+        patched = []
         for fixed in ("2.24.4", "2.25.2", "2.23.6", "2.22.6"):
-            for package in ("gs-web-app", "gs-wfs", "gs-wms"):
-                vulnerabilities.append({"package": {"name": package}, "patched_versions": fixed})
+            patched.extend([fixed] * 3)
         self.assertEqual(
             {"2.25.x": "2.25.2", "2.24.x": "2.24.4", "2.23.x": "2.23.6", "2.22.x": "2.22.6"},
-            cv.derive_patched_versions(vulnerabilities),
+            cv.derive_patched_versions(patched),
         )
 
     def test_lowest_per_series_wins(self):
-        vulnerabilities = [{"patched_versions": "2.28.6"}, {"patched_versions": "2.28.5"}]
-        self.assertEqual({"2.28.x": "2.28.5"}, cv.derive_patched_versions(vulnerabilities))
+        self.assertEqual({"2.28.x": "2.28.5"}, cv.derive_patched_versions(["2.28.6", "2.28.5"]))
 
     def test_several_versions_in_one_string(self):
         self.assertEqual(
             {"3.0.x": "3.0.1", "2.28.x": "2.28.5"},
-            cv.derive_patched_versions([{"patched_versions": "3.0.1, 2.28.5"}]),
+            cv.derive_patched_versions(["3.0.1, 2.28.5"]),
         )
 
     def test_unusable_values_are_ignored(self):
-        for value in (None, "", "latest", "2.7.1.1", "3.0"):
-            self.assertEqual({}, cv.derive_patched_versions([{"patched_versions": value}]), value)
-        self.assertEqual({}, cv.derive_patched_versions(None))
+        for value in ("", "latest", "2.7.1.1", "3.0"):
+            self.assertEqual({}, cv.derive_patched_versions([value]), value)
+        self.assertEqual({}, cv.derive_patched_versions([]))
+
+
+def raw_advisory(ghsa="GHSA-abcd-efgh-ijkl", **overrides):
+    advisory = {
+        "ghsa_id": ghsa,
+        "cve_id": "CVE-2026-00000",
+        "summary": "Example",
+        "severity": "high",
+        "published_at": "2026-01-01T00:00:00Z",
+        "vulnerabilities": [{"vulnerable_version_range": "< 2.28.5", "patched_versions": "2.28.5"}],
+    }
+    advisory.update(overrides)
+    return advisory
 
 
 class AdvisoryTest(unittest.TestCase):
     def test_transform(self):
-        raw = {
-            "ghsa_id": "GHSA-jvpx-6qxg-whgc",
-            "cve_id": None,
-            "summary": "Example",
-            "severity": "CRITICAL",
-            "published_at": "2026-08-24T15:50:11Z",
-            "vulnerabilities": [
+        raw = raw_advisory(
+            "GHSA-jvpx-6qxg-whgc",
+            cve_id=None,
+            severity="critical",
+            published_at="2026-08-24T15:50:11Z",
+            vulnerabilities=[
                 {"vulnerable_version_range": "3.0.0", "patched_versions": "3.0.1"},
                 {"vulnerable_version_range": "3.0.0", "patched_versions": "3.0.1"},
                 {"vulnerable_version_range": ">=2.28.0", "patched_versions": "2.28.5"},
             ],
-        }
+        )
         advisory = cv.transform_advisory(raw)
         self.assertEqual("critical", advisory["severity"])
         self.assertIsNone(advisory["cve_id"])
         self.assertEqual(["3.0.0", ">=2.28.0"], advisory["vulnerable_versions"])
         self.assertEqual({"3.0.x": "3.0.1", "2.28.x": "2.28.5"}, advisory["patched_versions"])
+        self.assertEqual(
+            ["ghsa_id", "cve_id", "summary", "severity", "published_at", "vulnerable_versions", "patched_versions"],
+            list(advisory),
+        )
 
-    def test_missing_data_does_not_crash(self):
-        advisory = cv.transform_advisory({"ghsa_id": "GHSA-x", "vulnerabilities": None})
+    def test_only_allow_listed_fields_are_copied(self):
+        raw = raw_advisory(
+            credits=[{"user": {"login": "someone", "email": "someone@example.com"}}],
+            cvss={"vector_string": "CVSS:3.1/AV:N"},
+            references=["https://evil.example"],
+            description="long text",
+        )
+        raw["vulnerabilities"][0]["package"] = {"name": "gs-wms"}
+        advisory = cv.transform_advisory(raw)
+        self.assertNotIn("credits", advisory)
+        self.assertNotIn("someone", json.dumps(advisory))
+        self.assertNotIn("evil.example", json.dumps(advisory))
+
+    def test_missing_vulnerabilities_is_an_empty_list(self):
+        advisory = cv.transform_advisory(raw_advisory(vulnerabilities=None))
         self.assertEqual([], advisory["vulnerable_versions"])
         self.assertEqual({}, advisory["patched_versions"])
-        self.assertEqual("unknown", advisory["severity"])
 
-    def test_advisories_without_any_version_are_left_out(self):
-        def raw(ghsa, ranges):
-            return {
-                "ghsa_id": ghsa,
-                "published_at": "2026-01-01T00:00:00Z",
-                "vulnerabilities": [{"vulnerable_version_range": r} for r in ranges],
-            }
-
+    def test_advisories_that_are_only_commit_hashes_are_left_out_and_logged(self):
+        logged = []
         advisories = cv.transform_advisories(
             [
-                raw("GHSA-sha", ["df11a650c650ff895977c5440427c239671ee649"]),
-                raw("GHSA-bare", ["3.0.0"]),
-                raw("GHSA-range", ["<= 2.26.3"]),
-                raw("GHSA-mixed", ["df11a650c650ff895977c5440427c239671ee649", ">= 2.28.0"]),
-                raw("GHSA-none", []),
-            ]
+                raw_advisory("GHSA-aaaa-aaaa-aaaa", vulnerabilities=[{"vulnerable_version_range": "df11a650c650ff895977c5440427c239671ee649"}]),
+                raw_advisory("GHSA-bbbb-bbbb-bbbb", vulnerabilities=[{"vulnerable_version_range": "3.0.0"}]),
+                raw_advisory("GHSA-cccc-cccc-cccc", vulnerabilities=[{"vulnerable_version_range": "<= 2.26.3"}]),
+                raw_advisory("GHSA-dddd-dddd-dddd", vulnerabilities=[{"vulnerable_version_range": "df11a650c650ff895977c5440427c239671ee649"}, {"vulnerable_version_range": ">= 2.28.0"}]),
+                raw_advisory("GHSA-eeee-eeee-eeee", vulnerabilities=[]),
+                raw_advisory("GHSA-ffff-ffff-ffff", vulnerabilities=[{"vulnerable_version_range": "rm -rf"}]),
+            ],
+            log=logged.append,
         )
         self.assertEqual(
-            ["GHSA-bare", "GHSA-mixed", "GHSA-none", "GHSA-range"], sorted(a["ghsa_id"] for a in advisories)
+            ["GHSA-bbbb-bbbb-bbbb", "GHSA-cccc-cccc-cccc", "GHSA-dddd-dddd-dddd", "GHSA-eeee-eeee-eeee", "GHSA-ffff-ffff-ffff"],
+            sorted(a["ghsa_id"] for a in advisories),
         )
+        self.assertEqual(["excluded GHSA-aaaa-aaaa-aaaa: its only ranges are commit hashes"], logged)
 
     def test_newest_first(self):
         advisories = cv.transform_advisories(
             [
-                {"ghsa_id": "GHSA-a", "published_at": "2025-01-01T00:00:00Z"},
-                {"ghsa_id": "GHSA-b", "published_at": "2026-01-01T00:00:00Z"},
+                raw_advisory("GHSA-aaaa-aaaa-aaaa", published_at="2025-01-01T00:00:00Z"),
+                raw_advisory("GHSA-bbbb-bbbb-bbbb", published_at="2026-01-01T00:00:00Z"),
             ]
         )
-        self.assertEqual(["GHSA-b", "GHSA-a"], [a["ghsa_id"] for a in advisories])
+        self.assertEqual(["GHSA-bbbb-bbbb-bbbb", "GHSA-aaaa-aaaa-aaaa"], [a["ghsa_id"] for a in advisories])
 
 
 class FeedTest(unittest.TestCase):

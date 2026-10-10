@@ -14,7 +14,7 @@ on:
   # to regenerate the alpha feed.
   workflow_dispatch: {}
   # The alpha branch is not reached by the triggers above, so regenerate it
-  # whenever its generator or tests change.
+  # whenever its generator, validator, tests or workflow change.
   push:
     branches: [alpha]
     paths:
@@ -22,20 +22,24 @@ on:
       - 'tests/**'
       - '.github/workflows/update-versions.yml'
 
+# Least privilege: read-only by default. Only the publish job can write.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: update-versions-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  check:
+  generate:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Run tests
         run: python3 -m unittest discover -s tests
@@ -43,9 +47,38 @@ jobs:
       - name: Generate versions.json
         run: python3 scripts/check_versions.py
 
+      - name: Validate versions.json (independent validator)
+        run: python3 scripts/validate_feed.py versions.json
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: versions-json
+          path: versions.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: generate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: versions-json
+          path: incoming
+
+      - name: Validate the artifact again before publishing
+        run: python3 scripts/validate_feed.py incoming/versions.json
+
       - name: Commit versions.json if changed
         id: commit
         run: |
+          cp incoming/versions.json versions.json
           if git diff --quiet -- versions.json; then
             echo "No change in versions.json, nothing to commit."
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -68,8 +101,6 @@ jobs:
           for attempt in 1 2 3; do
             status=$(curl -s -o /tmp/purge_response.json -w "%{http_code}" "$url")
             echo "Attempt $attempt: HTTP $status"
-            cat /tmp/purge_response.json
-            echo
             if [ "$status" = "200" ]; then
               exit 0
             fi

@@ -92,10 +92,10 @@ Notes for anyone consuming the feed directly:
 
 - Check `schema_version` first and refuse a version you do not understand.
 - Compare versions numerically, never as strings (`2.9` is older than `2.10`).
-- `vulnerable_versions` strings are copied verbatim from GitHub and are **not**
-  validated. They can be ambiguous (a bare `3.0.0`), impossible (an empty
-  range), or not versions at all (a commit hash). Do not silently ignore an
-  advisory you cannot parse; ask a human to review it.
+- `vulnerable_versions` entries are GitHub's own wording, kept only when they
+  are plainly a version range (or a commit hash), otherwise published as `""`.
+  They can still be ambiguous (a bare `3.0.0`) or impossible (an empty range).
+  Do not silently ignore an advisory you cannot parse; ask a human to review it.
 - `patched_versions` may be `{}` when GitHub gives no usable data.
 - An advisory whose only ranges are not versions (for example a commit hash in
   the project's own CI) can never apply to a running release, so it is left out
@@ -173,12 +173,31 @@ The feed is a one-way, anonymous pipeline.
 ## Running it yourself
 
 ```bash
-python3 scripts/check_versions.py
+python3 -m unittest discover -s tests     # unit and hostile-input tests
+python3 scripts/check_versions.py         # writes versions.json
+python3 scripts/validate_feed.py          # independent validator; exit 0 = valid
 ```
 
-Writes `versions.json` to the repository root. It needs only the Python 3
-standard library and makes a handful of unauthenticated GitHub API requests, so
-do not run it in a tight loop (the limit is 60 requests per hour per address).
+It needs only the Python 3 standard library. The generator makes a handful of
+unauthenticated GitHub API requests, so do not run it in a tight loop (the limit
+is 60 requests per hour per address).
+
+## Hardening
+
+The generator treats all upstream data as untrusted and publishes nothing it
+cannot prove clean. It copies only allow-listed fields (no names, e-mail
+addresses or other personal data), checks every type and format, builds URLs
+instead of copying them, reduces free text to plain text, and fails the run if
+any limit is exceeded or any advisory cannot be cleaned. A separate validator,
+which shares no code with the generator, re-checks the written file before it is
+committed and again before it is published. The workflow's actions are pinned to
+commit SHAs, and only the publish step has write permission. The full rules are
+in section 12 of the feed specification.
+
+Maintainers: in the repository settings, protect `main`, require the **Checks**
+workflow and code-owner review (`.github/CODEOWNERS`), and let only the
+`github-actions` bot bypass the pull-request requirement so it can commit
+`versions.json`.
 
 ## Limitations
 

@@ -1,0 +1,8 @@
+# Proposes updates to the pinned GitHub Action commit SHAs as pull requests,
+# which the Checks workflow and a code owner then review.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
