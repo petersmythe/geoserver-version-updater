@@ -63,7 +63,7 @@ SOURCE_NOTE = (
     "We cannot see which GeoServer versions are running. This module sends nothing about your server. "
     "However, the feed hosts can see the public IP address of your server making the request."
 )
-MAX_NOTE = 1000
+MAX_NOTE = 500
 COORDINATION_WINDOW = timedelta(hours=24)
 BLOG_LOOKBACK_DAYS = 240
 MAX_ADVISORY_PAGES = 3

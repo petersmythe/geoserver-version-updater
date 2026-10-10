@@ -75,7 +75,7 @@ class ValidatorTest(unittest.TestCase):
         for bad in ("yesterday", "2026-13-45T00:00:00Z", 5, "2026-01-01T00:00:00+00:00"):
             self.assert_rejected(mutated(lambda d, b=bad: d.update(generated=b)), "generated")
         self.assert_rejected(mutated(lambda d: d.update(source_note="javascript:alert(1)")), "script")
-        self.assert_rejected(mutated(lambda d: d.update(source_note="x" * 1001)), "source_note")
+        self.assert_rejected(mutated(lambda d: d.update(source_note="x" * 501)), "source_note")
 
     def test_series(self):
         def first(change):

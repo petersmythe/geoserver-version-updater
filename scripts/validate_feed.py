@@ -291,7 +291,7 @@ def validate_text(raw):
     if not isinstance(document["source_note"], str):
         problems.add("source_note", "is not a string")
     else:
-        check_plain(problems, "source_note", document["source_note"], 1000)
+        check_plain(problems, "source_note", document["source_note"], 500)
     if type(document["schema_version"]) is not int or document["schema_version"] != 1:
         problems.add("schema_version", "is not the integer 1")
     check_stamp(problems, "generated", document["generated"])
