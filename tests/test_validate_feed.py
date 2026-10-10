@@ -57,7 +57,9 @@ class ValidatorTest(unittest.TestCase):
         text = valid_text()
         self.assert_rejected(text.replace('"schema_version": 1,', '"schema_version": 1, "schema_version": 1,'), "valid JSON")
         self.assert_rejected(text.replace('"schema_version": 1', '"schema_version": NaN'), "valid JSON")
-        self.assert_rejected('{"a": ' + "[" * 5000 + "]" * 5000 + "}\n", "valid JSON")
+        # Python before 3.12 fails to parse this; later versions parse it and the depth check rejects it.
+        self.assert_rejected('{"a": ' + "[" * 5000 + "]" * 5000 + "}\n")
+        self.assert_rejected('{"a": ' + "[" * 200000 + "]" * 200000 + "}\n")
         deep = mutated(lambda d: d.update(series=[[[[[[[[[[1]]]]]]]]]]))
         self.assert_rejected(deep, "nested too deeply")
 
