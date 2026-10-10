@@ -57,10 +57,13 @@ OUTPUT_PATH = Path(__file__).resolve().parent.parent / "versions.json"
 
 SCHEMA_VERSION = 1
 SOURCE_NOTE = (
-    "Generated from public GitHub data by an anonymous script on GitHub Actions. "
-    "Served by the jsDelivr CDN. The GeoServer team does not run the feed host, "
-    "receives no request logs, and cannot see which versions are being run."
+    "The version feed is a static file on GitHub, delivered directly (raw.githubusercontent.com) "
+    "or through the public jsDelivr content delivery network (cdn.jsdelivr.net). "
+    "The GeoServer team does not run these hosts and receives no request logs at all. "
+    "We cannot see which GeoServer versions are running. This module sends nothing about your server. "
+    "However, the feed hosts can see the public IP address of your server making the request."
 )
+MAX_NOTE = 1000
 COORDINATION_WINDOW = timedelta(hours=24)
 BLOG_LOOKBACK_DAYS = 240
 MAX_ADVISORY_PAGES = 3
@@ -99,6 +102,17 @@ CATEGORY_RE = re.compile(r"[a-z0-9-]{1,40}")
 _SPACE_LIKE = re.compile("[\t\n\r\v\f\x85  ]")
 _MARKDOWN_LINK = re.compile(r"!?\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)")
 _TAG = re.compile(r"<[^>]*>")
+_PLACEHOLDER = re.compile(r"<([A-Za-z][A-Za-z0-9_-]{0,29})>")
+HTML_ELEMENTS = frozenset(
+    """a abbr acronym address applet area article aside audio b base basefont bdi bdo bgsound big blink
+    blockquote body br button canvas caption center cite code col colgroup command content data datalist dd del
+    details dfn dialog dir div dl dt element em embed fieldset figcaption figure font footer form frame frameset
+    h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe image img input ins isindex kbd keygen label legend li
+    link listing main map mark marquee math menu menuitem meta meter multicol nav nextid nobr noembed noframes
+    noscript object ol optgroup option output p param picture plaintext pre progress q rb rbc rp rt rtc ruby s
+    samp script search section select shadow slot small source spacer span strike strong style sub summary sup
+    svg table tbody td template textarea tfoot th thead time title tr track tt u ul var video wbr xmp""".split()
+)
 _SCHEME = re.compile(r"(javascript|vbscript|data)\s*:", re.IGNORECASE)
 _WHITESPACE = re.compile(r"\s+")
 _UNSAFE_CATEGORIES = ("Cc", "Cf", "Cs", "Co")
@@ -229,12 +243,24 @@ def _remove_unsafe(text):
     return "".join(ch for ch in text if unicodedata.category(ch) not in _UNSAFE_CATEGORIES)
 
 
+def _placeholder_word(match):
+    """A bare <name> that is not an HTML element is a placeholder in prose, such
+    as sld=<url>: keep the word and drop the brackets. Real elements are removed."""
+    name = match.group(1)
+    return "" if name.lower() in HTML_ELEMENTS else name
+
+
 def _strip_tags(text):
     while True:
-        stripped = _TAG.sub("", text)
-        if stripped == text:
+        previous = text
+        while True:
+            replaced = _PLACEHOLDER.sub(_placeholder_word, text)
+            if replaced == text:
+                break
+            text = replaced
+        text = _TAG.sub("", text)
+        if text == previous:
             return text
-        text = stripped
 
 
 def clean_text(value, max_len=MAX_STRING):

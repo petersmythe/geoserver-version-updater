@@ -92,6 +92,40 @@ class SummaryTest(HostileCase):
                          cv.clean_text("Improper ENTITY_RESOLUTION_ALLOWLIST URI validation in XML Processing (SSRF)"))
         self.assertEqual("Tom & Jerry", cv.clean_text("Tom &amp; Jerry"))
 
+    def test_bare_placeholders_keep_their_word_but_real_markup_is_removed(self):
+        keep = {
+            "Unsecured WMS dynamic styling sld=<url> parameter": "Unsecured WMS dynamic styling sld=url parameter",
+            "path <file> and <my-tag> and <URL>": "path file and my-tag and URL",
+            "&lt;url&gt; decoded once": "url decoded once",
+            "<<url>>": "url",
+            "<url></url>": "url",
+        }
+        for raw, expected in keep.items():
+            self.assertEqual(expected, cv.clean_text(raw), raw)
+        gone = {
+            "<script>alert(1)</script>": "alert(1)",
+            "<img src=x onerror=alert(1)>": "",
+            "<svg/onload=alert(1)>": "",
+            "<a href=x>link</a> <b>bold</b>": "link bold",
+            "<url onclick=alert(1)>": "",
+            "<url/>": "",
+            "<marquee>x</marquee> <blink>y</blink>": "x y",
+            "<javascript:alert(1)>": "",
+            "<div><span>text</span></div>": "text",
+            "<style>p{}</style>": "p{}",
+        }
+        for raw, expected in gone.items():
+            self.assertEqual(expected, cv.clean_text(raw), raw)
+
+    def test_a_placeholder_word_cannot_assemble_a_script_scheme(self):
+        for raw in ("<javascript>:alert(1)", "<vbscript>:x", "<data>:text/html", "java<x>script:alert(1)"):
+            cleaned = cv.clean_text(raw)
+            self.assertNotIn("javascript:", cleaned.lower(), raw)
+            self.assertNotIn("vbscript:", cleaned.lower(), raw)
+            self.assertNotIn("data:", cleaned.lower(), raw)
+            self.assertNotIn("<", cleaned)
+            self.assertNotIn(">", cleaned)
+
     def test_entities_are_decoded_only_once(self):
         self.assertEqual("&lt;b&gt;", cv.clean_text("&amp;lt;b&amp;gt;"))
 

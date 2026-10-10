@@ -328,6 +328,10 @@ class FeedTest(unittest.TestCase):
         feed = cv.build_feed(real_releases(), [], no_blog, None, self.NOW)
         self.assertEqual(["source_note", "schema_version", "generated", "series", "advisories"], list(feed))
         self.assertEqual(cv.SOURCE_NOTE, feed["source_note"])
+        self.assertLessEqual(len(cv.SOURCE_NOTE), cv.MAX_NOTE)
+        for host in ("raw.githubusercontent.com", "cdn.jsdelivr.net"):
+            self.assertIn(host, cv.SOURCE_NOTE)
+        self.assertIn("public IP address", cv.SOURCE_NOTE)
 
     def test_generated_only_moves_when_content_changes(self):
         first = cv.build_feed(real_releases(), [], no_blog, None, self.NOW)
