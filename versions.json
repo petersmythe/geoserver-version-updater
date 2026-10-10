@@ -1,6 +1,7 @@
 {
+  "source_note": "Generated from public GitHub data by an anonymous script on GitHub Actions. Served by the jsDelivr CDN. The GeoServer team does not run the feed host, receives no request logs, and cannot see which versions are being run.",
   "schema_version": 1,
-  "generated": "2026-10-09T18:21:14Z",
+  "generated": "2026-10-10T11:14:14Z",
   "series": [
     {
       "series": "3.0.x",
@@ -162,8 +163,8 @@
       "published_at": "2026-08-24T15:50:11Z",
       "vulnerable_versions": [
         "3.0.0",
-        ">=2.28.0",
-        ">2.23.5, <2.25.0, >=2.25.3"
+        "\u003e=2.28.0",
+        "\u003e2.23.5, \u003c2.25.0, \u003e=2.25.3"
       ],
       "patched_versions": {
         "3.0.x": "3.0.1",
@@ -178,7 +179,7 @@
       "severity": "high",
       "published_at": "2026-06-11T17:55:55Z",
       "vulnerable_versions": [
-        "<2.27.0"
+        "\u003c2.27.0"
       ],
       "patched_versions": {
         "2.27.x": "2.27.0"
@@ -191,8 +192,8 @@
       "severity": "high",
       "published_at": "2026-06-11T17:55:27Z",
       "vulnerable_versions": [
-        ">= 2.27.0, <= 2.27.2",
-        "<= 2.26.3"
+        "\u003e= 2.27.0, \u003c= 2.27.2",
+        "\u003c= 2.26.3"
       ],
       "patched_versions": {
         "2.27.x": "2.27.3",
@@ -206,8 +207,8 @@
       "severity": "medium",
       "published_at": "2026-06-11T17:54:58Z",
       "vulnerable_versions": [
-        "<=2.26.3",
-        ">= 2.27.0, <= 2.27.2"
+        "\u003c=2.26.3",
+        "\u003e= 2.27.0, \u003c= 2.27.2"
       ],
       "patched_versions": {
         "2.27.x": "2.27.3",
@@ -221,7 +222,7 @@
       "severity": "high",
       "published_at": "2026-06-11T17:45:57Z",
       "vulnerable_versions": [
-        "< 2.27.0"
+        "\u003c 2.27.0"
       ],
       "patched_versions": {
         "2.27.x": "2.27.0"
@@ -234,8 +235,8 @@
       "severity": "high",
       "published_at": "2025-11-25T14:03:49Z",
       "vulnerable_versions": [
-        ">= 2.26.0, <= 2.26.1",
-        "<=2.25.5"
+        "\u003e= 2.26.0, \u003c= 2.26.1",
+        "\u003c=2.25.5"
       ],
       "patched_versions": {
         "2.26.x": "2.26.2",
@@ -249,7 +250,7 @@
       "severity": "medium",
       "published_at": "2025-11-25T14:02:08Z",
       "vulnerable_versions": [
-        "<2.25.0"
+        "\u003c2.25.0"
       ],
       "patched_versions": {
         "2.25.x": "2.25.0"
@@ -262,7 +263,7 @@
       "severity": "high",
       "published_at": "2025-06-10T08:42:23Z",
       "vulnerable_versions": [
-        ">= 1.0.0"
+        "\u003e= 1.0.0"
       ],
       "patched_versions": {
         "2.25.x": "2.25.2",
@@ -276,8 +277,8 @@
       "severity": "high",
       "published_at": "2025-06-10T08:33:01Z",
       "vulnerable_versions": [
-        ">=2.0.0,<2.24.4",
-        ">2.25.0,<2.25.2"
+        "\u003e=2.0.0,\u003c2.24.4",
+        "\u003e2.25.0,\u003c2.25.2"
       ],
       "patched_versions": {
         "2.25.x": "2.25.2",
@@ -291,7 +292,7 @@
       "severity": "medium",
       "published_at": "2025-06-10T08:32:31Z",
       "vulnerable_versions": [
-        "<2.25.0"
+        "\u003c2.25.0"
       ],
       "patched_versions": {
         "2.25.x": "2.25.0"
@@ -304,8 +305,8 @@
       "severity": "medium",
       "published_at": "2025-06-10T08:30:01Z",
       "vulnerable_versions": [
-        ">=2.26.0, <2.26.2",
-        "<2.25.6"
+        "\u003e=2.26.0, \u003c2.26.2",
+        "\u003c2.25.6"
       ],
       "patched_versions": {
         "2.26.x": "2.26.2",
@@ -319,7 +320,7 @@
       "severity": "medium",
       "published_at": "2025-06-10T08:29:27Z",
       "vulnerable_versions": [
-        "< 2.26.0"
+        "\u003c 2.26.0"
       ],
       "patched_versions": {
         "2.26.x": "2.26.0"
@@ -332,8 +333,8 @@
       "severity": "medium",
       "published_at": "2025-06-10T08:28:33Z",
       "vulnerable_versions": [
-        ">=2.26.0, <2.26.3",
-        "<2.25.6"
+        "\u003e=2.26.0, \u003c2.26.3",
+        "\u003c2.25.6"
       ],
       "patched_versions": {
         "2.26.x": "2.26.3",
@@ -343,13 +344,13 @@
     {
       "ghsa_id": "GHSA-gr67-pwcv-76gf",
       "cve_id": "CVE-2025-30145",
-      "summary": "Denial-of-service (DoS)  Vulnerability in Jiffle process",
+      "summary": "Denial-of-service (DoS) Vulnerability in Jiffle process",
       "severity": "high",
       "published_at": "2025-06-10T08:28:15Z",
       "vulnerable_versions": [
-        "<2.27.0",
-        ">=2.26.0, <=2.26.2",
-        "<=2.25.6"
+        "\u003c2.27.0",
+        "\u003e=2.26.0, \u003c=2.26.2",
+        "\u003c=2.25.6"
       ],
       "patched_versions": {
         "2.27.x": "2.27.0",
@@ -365,8 +366,8 @@
       "published_at": "2025-06-10T06:30:38Z",
       "vulnerable_versions": [
         "2.27.0",
-        ">= 2.26.0, <= 2.26.2",
-        "<= 2.25.6"
+        "\u003e= 2.26.0, \u003c= 2.26.2",
+        "\u003c= 2.25.6"
       ],
       "patched_versions": {
         "2.27.x": "2.27.1",
@@ -381,7 +382,7 @@
       "severity": "medium",
       "published_at": "2024-12-16T21:48:50Z",
       "vulnerable_versions": [
-        ">2.0.0"
+        "\u003e2.0.0"
       ],
       "patched_versions": {
         "2.25.x": "2.25.1"
@@ -394,8 +395,8 @@
       "severity": "medium",
       "published_at": "2024-07-01T00:40:09Z",
       "vulnerable_versions": [
-        ">2.10.0,<2.24.4",
-        ">2.10.0,<2.25.1"
+        "\u003e2.10.0,\u003c2.24.4",
+        "\u003e2.10.0,\u003c2.25.1"
       ],
       "patched_versions": {
         "2.25.x": "2.25.1",
@@ -409,8 +410,8 @@
       "severity": "medium",
       "published_at": "2024-07-01T00:35:25Z",
       "vulnerable_versions": [
-        "< 2.23.5",
-        ">= 2.24.0, < 2.24.3"
+        "\u003c 2.23.5",
+        "\u003e= 2.24.0, \u003c 2.24.3"
       ],
       "patched_versions": {
         "2.24.x": "2.24.3",
@@ -424,11 +425,11 @@
       "severity": "critical",
       "published_at": "2024-07-01T00:31:30Z",
       "vulnerable_versions": [
-        ">= 2.24.0, < 2.24.4",
-        ">= 2.25.0, < 2.25.2",
-        ">=2.25.0, <2.25.2",
-        ">=2.23.0, < 2.23.6",
-        "<2.22.6"
+        "\u003e= 2.24.0, \u003c 2.24.4",
+        "\u003e= 2.25.0, \u003c 2.25.2",
+        "\u003e=2.25.0, \u003c2.25.2",
+        "\u003e=2.23.0, \u003c 2.23.6",
+        "\u003c2.22.6"
       ],
       "patched_versions": {
         "2.25.x": "2.25.2",
@@ -444,7 +445,7 @@
       "severity": "high",
       "published_at": "2024-03-19T19:14:24Z",
       "vulnerable_versions": [
-        "<2.23.4, <2.24.1"
+        "\u003c2.23.4, \u003c2.24.1"
       ],
       "patched_versions": {
         "2.24.x": "2.24.1",
@@ -458,7 +459,7 @@
       "severity": "high",
       "published_at": "2024-03-19T19:14:12Z",
       "vulnerable_versions": [
-        "< 3.0.0"
+        "\u003c 3.0.0"
       ],
       "patched_versions": {
         "3.0.x": "3.0.0"
@@ -471,7 +472,7 @@
       "severity": "medium",
       "published_at": "2024-03-19T19:14:03Z",
       "vulnerable_versions": [
-        "<2.23.5, <2.24.2"
+        "\u003c2.23.5, \u003c2.24.2"
       ],
       "patched_versions": {
         "2.24.x": "2.24.2",
@@ -485,7 +486,7 @@
       "severity": "medium",
       "published_at": "2024-03-19T19:13:55Z",
       "vulnerable_versions": [
-        "<2.23.2, <2.24.1"
+        "\u003c2.23.2, \u003c2.24.1"
       ],
       "patched_versions": {
         "2.24.x": "2.24.1",
@@ -499,7 +500,7 @@
       "severity": "medium",
       "published_at": "2024-03-19T19:13:48Z",
       "vulnerable_versions": [
-        "<2.23.4, <2.24.1"
+        "\u003c2.23.4, \u003c2.24.1"
       ],
       "patched_versions": {
         "2.24.x": "2.24.1",
@@ -513,7 +514,7 @@
       "severity": "medium",
       "published_at": "2024-03-19T19:13:40Z",
       "vulnerable_versions": [
-        "<2.23.4, <2.24.1"
+        "\u003c2.23.4, \u003c2.24.1"
       ],
       "patched_versions": {
         "2.24.x": "2.24.1",
@@ -527,7 +528,7 @@
       "severity": "medium",
       "published_at": "2024-03-19T19:13:32Z",
       "vulnerable_versions": [
-        "<2.23.3, <2.24.1"
+        "\u003c2.23.3, \u003c2.24.1"
       ],
       "patched_versions": {
         "2.24.x": "2.24.1",
@@ -541,7 +542,7 @@
       "severity": "medium",
       "published_at": "2024-03-19T19:13:25Z",
       "vulnerable_versions": [
-        "<2.23.4, <2.24.1"
+        "\u003c2.23.4, \u003c2.24.1"
       ],
       "patched_versions": {
         "2.24.x": "2.24.1",
@@ -555,7 +556,7 @@
       "severity": "medium",
       "published_at": "2024-03-19T19:13:15Z",
       "vulnerable_versions": [
-        "<2.23.3"
+        "\u003c2.23.3"
       ],
       "patched_versions": {
         "2.24.x": "2.24.0",
@@ -569,7 +570,7 @@
       "severity": "medium",
       "published_at": "2024-03-19T19:13:06Z",
       "vulnerable_versions": [
-        "<2.23.3"
+        "\u003c2.23.3"
       ],
       "patched_versions": {
         "2.24.x": "2.24.0",
@@ -579,11 +580,11 @@
     {
       "ghsa_id": "GHSA-cqpc-x2c6-2gmf",
       "cve_id": "CVE-2023-41339",
-      "summary": "Unsecured WMS dynamic styling sld=<url> parameter affords blind unauthenticated SSRF",
+      "summary": "Unsecured WMS dynamic styling sld= parameter affords blind unauthenticated SSRF",
       "severity": "high",
       "published_at": "2023-10-24T04:21:52Z",
       "vulnerable_versions": [
-        "<2.22.5, <2.23.2"
+        "\u003c2.22.5, \u003c2.23.2"
       ],
       "patched_versions": {
         "2.23.x": "2.23.2",
@@ -597,7 +598,7 @@
       "severity": "high",
       "published_at": "2023-10-24T04:12:40Z",
       "vulnerable_versions": [
-        "<2.22.5, < 2.23.2"
+        "\u003c2.22.5, \u003c 2.23.2"
       ],
       "patched_versions": {
         "2.23.x": "2.23.2",
@@ -611,7 +612,7 @@
       "severity": "critical",
       "published_at": "2023-02-21T19:53:34Z",
       "vulnerable_versions": [
-        "< 2.21.4, < 2.22.2"
+        "\u003c 2.21.4, \u003c 2.22.2"
       ],
       "patched_versions": {
         "2.22.x": "2.22.2",
@@ -628,7 +629,7 @@
       "severity": "high",
       "published_at": "2022-04-13T05:07:29Z",
       "vulnerable_versions": [
-        "< 2.20.4, <2.19.6"
+        "\u003c 2.20.4, \u003c2.19.6"
       ],
       "patched_versions": {
         "2.21.x": "2.21.0",
