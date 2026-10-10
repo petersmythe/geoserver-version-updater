@@ -70,7 +70,7 @@ end-of-life dates are published or calculated.
       "blog_url": "https://geoserver.org/announcements/...",   // null if no post was found
       "security_flagged": true,           // the blog post flags it as a security release
       "synchronized_release": true,       // released within 24h of another series
-      "recent_releases": [                // every release of the last 180 days, newest first
+      "recent_releases": [                // every release of the last 365 days, newest first
         {
           "version": "2.28.5",
           "published_at": "2026-08-14T23:41:43Z",
@@ -119,8 +119,8 @@ Notes for anyone consuming the feed directly:
   release is looked up again on every run until its post appears.
 - The series-level `blog_url`, `security_flagged` and `synchronized_release`
   describe the latest release only. `recent_releases` lists every release of the
-  last 180 days, so a consumer that is several releases behind can see a
-  security release in between. A release older than 180 days is no longer
+  last 365 days, so a consumer that is several releases behind can see a
+  security release in between. A release older than a year (365 days) is no longer
   listed; the advisories are the long-term record. The feed carries no CVE ids in
   `series`: vulnerabilities are in `advisories`.
 - Treat all strings in the feed as untrusted input.

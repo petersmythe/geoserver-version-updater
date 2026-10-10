@@ -1,4 +1,4 @@
-"""recent_releases: every release of the last 180 days, per series, without CVE ids."""
+"""recent_releases: every release of the last 365 days, per series, without CVE ids."""
 
 import json
 import sys
@@ -14,6 +14,7 @@ import validate_feed  # noqa: E402
 from test_check_versions import UTC, raw_release, real_releases, releases_from  # noqa: E402
 
 NOW = datetime(2026, 10, 8, 6, 0, 0, tzinfo=UTC)
+IN_WINDOW = {"3.0.1", "3.0.0", "2.28.5", "2.28.4", "2.28.2", "2.28.1", "2.28.0", "2.27.6", "2.27.5", "2.27.4", "2.27.3"}
 
 
 def lookup_flagging(*flagged):
@@ -48,8 +49,8 @@ class WindowTest(unittest.TestCase):
     def test_every_release_in_the_window_is_listed_newest_first(self):
         built = entries()
         self.assertEqual(["3.0.1", "3.0.0"], versions(built["3.0.x"]))
-        self.assertEqual(["2.28.5", "2.28.4"], versions(built["2.28.x"]))
-        self.assertEqual(["2.27.6"], versions(built["2.27.x"]))
+        self.assertEqual(["2.28.5", "2.28.4", "2.28.2", "2.28.1", "2.28.0"], versions(built["2.28.x"]))
+        self.assertEqual(["2.27.6", "2.27.5", "2.27.4", "2.27.3"], versions(built["2.27.x"]))
         for archive in ("2.26.x", "2.25.x", "2.24.x", "2.23.x", "2.22.x"):
             self.assertEqual([], built[archive]["recent_releases"], archive)
 
@@ -61,8 +62,8 @@ class WindowTest(unittest.TestCase):
             item,
         )
 
-    def test_the_window_is_180_days_inclusive(self):
-        edge = NOW - timedelta(days=180)
+    def test_the_window_is_365_days_inclusive(self):
+        edge = NOW - timedelta(days=365)
         releases = releases_from(
             [
                 raw_release("3.0.2", edge.strftime(cv.TIMESTAMP_FORMAT)),
@@ -75,7 +76,9 @@ class WindowTest(unittest.TestCase):
     def test_synchronized_is_decided_per_release(self):
         flags = {i["version"]: i["synchronized_release"] for e in entries().values() for i in e["recent_releases"]}
         self.assertEqual(
-            {"3.0.1": True, "3.0.0": False, "2.28.5": True, "2.28.4": False, "2.27.6": True}, flags
+            {"3.0.1": True, "3.0.0": False, "2.28.5": True, "2.28.4": False, "2.28.2": False, "2.28.1": False,
+             "2.28.0": False, "2.27.6": True, "2.27.5": False, "2.27.4": False, "2.27.3": False},
+            flags,
         )
 
     def test_there_are_no_cve_ids_or_confirmed_flags(self):
@@ -100,7 +103,9 @@ class SeriesLevelFieldsTest(unittest.TestCase):
         built = entries(lookup=lookup_flagging("2.28.4"))
         self.assertFalse(built["2.28.x"]["security_flagged"])
         flags = {i["version"]: i["security_flagged"] for i in built["2.28.x"]["recent_releases"]}
-        self.assertEqual({"2.28.5": False, "2.28.4": True}, flags)
+        self.assertEqual(
+            {"2.28.5": False, "2.28.4": True, "2.28.2": False, "2.28.1": False, "2.28.0": False}, flags
+        )
 
     def test_a_latest_release_outside_the_window_has_no_blog_data_and_is_not_looked_up(self):
         looked_up = []
@@ -112,7 +117,7 @@ class SeriesLevelFieldsTest(unittest.TestCase):
         built = entries(lookup=lookup)
         self.assertIsNone(built["2.26.x"]["blog_url"])
         self.assertFalse(built["2.26.x"]["security_flagged"])
-        self.assertEqual({"3.0.1", "3.0.0", "2.28.5", "2.28.4", "2.27.6"}, set(looked_up))
+        self.assertEqual(IN_WINDOW, set(looked_up))
 
     def test_a_hotfix_published_after_a_newer_patch_does_not_confuse_the_latest(self):
         releases = releases_from(
@@ -162,7 +167,7 @@ class ReuseTest(unittest.TestCase):
         first = cv.build_series_entries(real_releases(), lookup, [], NOW)
         calls.clear()
         cv.build_series_entries(real_releases(), lookup, first, NOW)
-        self.assertEqual({"3.0.1", "3.0.0", "2.28.5", "2.28.4", "2.27.6"}, set(calls))
+        self.assertEqual(IN_WINDOW, set(calls))
 
 
 class LimitsTest(unittest.TestCase):
