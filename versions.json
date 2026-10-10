@@ -1,7 +1,7 @@
 {
   "source_note": "The version feed is a static file on GitHub, delivered directly (raw.githubusercontent.com) or through the public jsDelivr content delivery network (cdn.jsdelivr.net). The GeoServer team does not run these hosts and receives no request logs at all. We cannot see which GeoServer versions are running. This module sends nothing about your server. However, the feed hosts can see the public IP address of your server making the request.",
   "schema_version": 1,
-  "generated": "2026-10-10T11:24:14Z",
+  "generated": "2026-10-10T17:06:54Z",
   "series": [
     {
       "series": "3.0.x",
@@ -9,12 +9,24 @@
       "latest_version": "3.0.1",
       "published_at": "2026-08-14T22:44:22Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/3.0.1",
-      "blog_confirmed": true,
       "blog_url": "https://geoserver.org/announcements/vulnerability/2026/08/14/geoserver-3-0-1-released.html",
       "security_flagged": true,
       "synchronized_release": true,
-      "cve_ids": [
-        "CVE-2026-76904"
+      "recent_releases": [
+        {
+          "version": "3.0.1",
+          "published_at": "2026-08-14T22:44:22Z",
+          "blog_url": "https://geoserver.org/announcements/vulnerability/2026/08/14/geoserver-3-0-1-released.html",
+          "security_flagged": true,
+          "synchronized_release": true
+        },
+        {
+          "version": "3.0.0",
+          "published_at": "2026-06-11T16:51:02Z",
+          "blog_url": "https://geoserver.org/announcements/vulnerability/2026/06/11/geoserver-3-0-0-released.html",
+          "security_flagged": true,
+          "synchronized_release": false
+        }
       ]
     },
     {
@@ -23,12 +35,24 @@
       "latest_version": "2.28.5",
       "published_at": "2026-08-14T23:41:43Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.28.5",
-      "blog_confirmed": true,
       "blog_url": "https://geoserver.org/announcements/vulnerability/2026/08/14/geoserver-2-28-5-released.html",
       "security_flagged": true,
       "synchronized_release": true,
-      "cve_ids": [
-        "CVE-2026-76904"
+      "recent_releases": [
+        {
+          "version": "2.28.5",
+          "published_at": "2026-08-14T23:41:43Z",
+          "blog_url": "https://geoserver.org/announcements/vulnerability/2026/08/14/geoserver-2-28-5-released.html",
+          "security_flagged": true,
+          "synchronized_release": true
+        },
+        {
+          "version": "2.28.4",
+          "published_at": "2026-05-27T10:43:49Z",
+          "blog_url": "https://geoserver.org/announcements/vulnerability/2026/05/25/geoserver-2-28-4-released.html",
+          "security_flagged": true,
+          "synchronized_release": false
+        }
       ]
     },
     {
@@ -37,12 +61,17 @@
       "latest_version": "2.27.6",
       "published_at": "2026-08-14T23:51:17Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.27.6",
-      "blog_confirmed": true,
       "blog_url": "https://geoserver.org/announcements/vulnerability/2026/08/14/geoserver-2-27-6-released.html",
       "security_flagged": true,
       "synchronized_release": true,
-      "cve_ids": [
-        "CVE-2026-76904"
+      "recent_releases": [
+        {
+          "version": "2.27.6",
+          "published_at": "2026-08-14T23:51:17Z",
+          "blog_url": "https://geoserver.org/announcements/vulnerability/2026/08/14/geoserver-2-27-6-released.html",
+          "security_flagged": true,
+          "synchronized_release": true
+        }
       ]
     },
     {
@@ -51,11 +80,10 @@
       "latest_version": "2.26.4",
       "published_at": "2025-09-02T16:33:52Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.26.4",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": false,
-      "cve_ids": []
+      "recent_releases": []
     },
     {
       "series": "2.25.x",
@@ -63,11 +91,10 @@
       "latest_version": "2.25.7",
       "published_at": "2025-05-14T04:37:01Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.25.7",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": true,
-      "cve_ids": []
+      "recent_releases": []
     },
     {
       "series": "2.24.x",
@@ -75,11 +102,10 @@
       "latest_version": "2.24.5",
       "published_at": "2024-08-26T09:36:50Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.24.5",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": false,
-      "cve_ids": []
+      "recent_releases": []
     },
     {
       "series": "2.23.x",
@@ -87,11 +113,10 @@
       "latest_version": "2.23.6",
       "published_at": "2024-06-25T17:18:56Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.23.6",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": false,
-      "cve_ids": []
+      "recent_releases": []
     },
     {
       "series": "2.22.x",
@@ -99,11 +124,10 @@
       "latest_version": "2.22.6",
       "published_at": "2025-03-13T17:11:43Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.22.6",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": false,
-      "cve_ids": []
+      "recent_releases": []
     },
     {
       "series": "2.21.x",
@@ -111,11 +135,10 @@
       "latest_version": "2.21.5",
       "published_at": "2023-05-08T08:53:55Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.21.5",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": false,
-      "cve_ids": []
+      "recent_releases": []
     },
     {
       "series": "2.20.x",
@@ -123,11 +146,10 @@
       "latest_version": "2.20.7",
       "published_at": "2023-02-21T16:08:54Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.20.7",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": true,
-      "cve_ids": []
+      "recent_releases": []
     },
     {
       "series": "2.19.x",
@@ -135,11 +157,10 @@
       "latest_version": "2.19.7",
       "published_at": "2023-02-21T16:11:10Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.19.7",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": true,
-      "cve_ids": []
+      "recent_releases": []
     },
     {
       "series": "2.18.x",
@@ -147,11 +168,10 @@
       "latest_version": "2.18.7",
       "published_at": "2023-02-21T16:12:26Z",
       "release_url": "https://github.com/geoserver/geoserver/releases/tag/2.18.7",
-      "blog_confirmed": false,
       "blog_url": null,
       "security_flagged": false,
       "synchronized_release": true,
-      "cve_ids": []
+      "recent_releases": []
     }
   ],
   "advisories": [
