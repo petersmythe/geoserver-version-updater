@@ -1,7 +1,7 @@
 {
-  "source_note": "Generated from public GitHub data by an anonymous script on GitHub Actions. Served by the jsDelivr CDN. The GeoServer team does not run the feed host, receives no request logs, and cannot see which versions are being run.",
+  "source_note": "The version feed is a static file on GitHub, delivered directly (raw.githubusercontent.com) or through the public jsDelivr content delivery network (cdn.jsdelivr.net). The GeoServer team does not run these hosts and receives no request logs at all. We cannot see which GeoServer versions are running. This module sends nothing about your server. However, the feed hosts can see the public IP address of your server making the request.",
   "schema_version": 1,
-  "generated": "2026-10-10T11:14:14Z",
+  "generated": "2026-10-10T11:24:14Z",
   "series": [
     {
       "series": "3.0.x",
@@ -580,7 +580,7 @@
     {
       "ghsa_id": "GHSA-cqpc-x2c6-2gmf",
       "cve_id": "CVE-2023-41339",
-      "summary": "Unsecured WMS dynamic styling sld= parameter affords blind unauthenticated SSRF",
+      "summary": "Unsecured WMS dynamic styling sld=url parameter affords blind unauthenticated SSRF",
       "severity": "high",
       "published_at": "2023-10-24T04:21:52Z",
       "vulnerable_versions": [
