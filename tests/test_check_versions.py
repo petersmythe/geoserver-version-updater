@@ -10,6 +10,7 @@ import check_versions as cv  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 UTC = timezone.utc
+AS_OF = datetime(2026, 10, 8, 6, 0, 0, tzinfo=UTC)
 
 
 def raw_release(tag, published_at):
@@ -158,7 +159,7 @@ class PhaseTest(unittest.TestCase):
 class SynchronizedTest(unittest.TestCase):
     def test_flag_follows_the_latest_release_of_each_series(self):
         entries = {
-            e["series"]: e for e in cv.build_series_entries(real_releases(), no_blog, [])
+            e["series"]: e for e in cv.build_series_entries(real_releases(), no_blog, [], AS_OF)
         }
         self.assertTrue(entries["3.0.x"]["synchronized_release"])
         self.assertTrue(entries["2.27.x"]["synchronized_release"])
@@ -168,7 +169,7 @@ class SynchronizedTest(unittest.TestCase):
 
 class SeriesEntriesTest(unittest.TestCase):
     def test_order_and_latest(self):
-        entries = cv.build_series_entries(real_releases(), no_blog, [])
+        entries = cv.build_series_entries(real_releases(), no_blog, [], AS_OF)
         self.assertEqual(
             ["3.0.x", "2.28.x", "2.27.x", "2.26.x", "2.25.x", "2.24.x", "2.23.x", "2.22.x"],
             [e["series"] for e in entries],
@@ -177,15 +178,14 @@ class SeriesEntriesTest(unittest.TestCase):
         self.assertEqual("3.0.1", latest["3.0.x"])
         self.assertEqual("2.25.7", latest["2.25.x"])
 
-    def test_confirmed_blog_data_is_reused_without_a_lookup(self):
+    def test_blog_data_already_found_is_reused_without_a_lookup(self):
         previous = [
             {
                 "series": "3.0.x",
                 "latest_version": "3.0.1",
-                "blog_confirmed": True,
                 "blog_url": "https://geoserver.org/x",
                 "security_flagged": True,
-                "cve_ids": ["CVE-2026-00000"],
+                "recent_releases": [],
             }
         ]
         calls = []
@@ -194,10 +194,12 @@ class SeriesEntriesTest(unittest.TestCase):
             calls.append(release.version)
             return None
 
-        entries = {e["series"]: e for e in cv.build_series_entries(real_releases(), lookup, previous)}
+        entries = {e["series"]: e for e in cv.build_series_entries(real_releases(), lookup, previous, AS_OF)}
         self.assertEqual("https://geoserver.org/x", entries["3.0.x"]["blog_url"])
+        self.assertTrue(entries["3.0.x"]["security_flagged"])
         self.assertNotIn("3.0.1", calls)
-        self.assertFalse(entries["2.28.x"]["blog_confirmed"])
+        self.assertIn("2.28.5", calls)
+        self.assertIsNone(entries["2.28.x"]["blog_url"])
 
 
 class PatchedVersionsTest(unittest.TestCase):
@@ -318,8 +320,8 @@ class FeedTest(unittest.TestCase):
         self.assertEqual("2026-10-08T06:00:00Z", feed["generated"])
         self.assertEqual(
             {
-                "series", "phase", "latest_version", "published_at", "release_url", "blog_confirmed",
-                "blog_url", "security_flagged", "synchronized_release", "cve_ids",
+                "series", "phase", "latest_version", "published_at", "release_url", "blog_url",
+                "security_flagged", "synchronized_release", "recent_releases",
             },
             set(feed["series"][0]),
         )

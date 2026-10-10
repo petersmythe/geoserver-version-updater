@@ -38,9 +38,12 @@ RELEASE_URL = re.compile(r"https://github\.com/geoserver/geoserver/releases/tag/
 
 TOP_KEYS = ["source_note", "schema_version", "generated", "series", "advisories"]
 SERIES_KEYS = [
-    "series", "phase", "latest_version", "published_at", "release_url", "blog_confirmed",
-    "blog_url", "security_flagged", "synchronized_release", "cve_ids",
+    "series", "phase", "latest_version", "published_at", "release_url", "blog_url",
+    "security_flagged", "synchronized_release", "recent_releases",
 ]
+RECENT_KEYS = ["version", "published_at", "blog_url", "security_flagged", "synchronized_release"]
+MAX_RECENT_PER_SERIES = 50
+MAX_RECENT_TOTAL = 300
 ADVISORY_KEYS = ["ghsa_id", "cve_id", "summary", "severity", "published_at", "vulnerable_versions", "patched_versions"]
 PHASES = ("stable", "maintenance", "archive")
 SEVERITIES = ("critical", "high", "medium", "low")
@@ -147,6 +150,55 @@ def check_stamp(problems, where, value):
         problems.add(where, "is not a real date")
 
 
+def version_key(version):
+    return tuple(int(part) for part in version.split("."))
+
+
+def check_recent(problems, where, entry):
+    """Validate recent_releases of one series entry. Returns its length."""
+    recent = entry["recent_releases"]
+    if not isinstance(recent, list):
+        problems.add(where, "recent_releases is not a list")
+        return 0
+    if len(recent) > MAX_RECENT_PER_SERIES:
+        problems.add(where, f"has more than {MAX_RECENT_PER_SERIES} recent releases")
+    series = entry["series"] if isinstance(entry["series"], str) else None
+    seen, previous_key = [], None
+    for j, item in enumerate(recent):
+        here = f"{where}.recent_releases[{j}]"
+        if not exact_keys(problems, here, item, RECENT_KEYS):
+            continue
+        version = item["version"]
+        if not (isinstance(version, str) and VERSION.fullmatch(version)):
+            problems.add(here, "invalid version")
+            continue
+        if series and version.rsplit(".", 1)[0] + ".x" != series:
+            problems.add(here, "version is not in the series")
+        seen.append(version)
+        check_stamp(problems, f"{here}.published_at", item["published_at"])
+        for flag in ("security_flagged", "synchronized_release"):
+            if type(item[flag]) is not bool:
+                problems.add(here, f"{flag} is not a boolean")
+        if item["blog_url"] is not None:
+            check_url(problems, f"{here}.blog_url", item["blog_url"])
+        if isinstance(item["published_at"], str) and STAMP.fullmatch(item["published_at"]):
+            key = (item["published_at"], version_key(version))
+            if previous_key is not None and key > previous_key:
+                problems.add(here, "is not newest first")
+            previous_key = key
+    if len(set(seen)) != len(seen):
+        problems.add(where, "recent_releases has duplicate versions")
+    latest = entry["latest_version"]
+    match = next((i for i in recent if isinstance(i, dict) and i.get("version") == latest), None)
+    if match is not None:
+        for key in ("blog_url", "security_flagged", "synchronized_release"):
+            if entry[key] != match.get(key):
+                problems.add(where, f"{key} differs from the latest release in recent_releases")
+    elif entry["blog_url"] is not None or entry["security_flagged"] is not False:
+        problems.add(where, "latest release is not in recent_releases but has a blog_url or a security flag")
+    return len(recent)
+
+
 def check_series(problems, entries):
     if not isinstance(entries, list):
         problems.add("series", "is not a list")
@@ -155,6 +207,7 @@ def check_series(problems, entries):
         problems.add("series", "has more than 100 entries")
     names = []
     stable = 0
+    total = 0
     for i, entry in enumerate(entries):
         where = f"series[{i}]"
         if not exact_keys(problems, where, entry, SERIES_KEYS):
@@ -175,18 +228,14 @@ def check_series(problems, entries):
         url = entry["release_url"]
         if not (isinstance(url, str) and RELEASE_URL.fullmatch(url)):
             problems.add(where, "release_url does not match the fixed template")
-        for flag in ("blog_confirmed", "security_flagged", "synchronized_release"):
+        for flag in ("security_flagged", "synchronized_release"):
             if type(entry[flag]) is not bool:
                 problems.add(where, f"{flag} is not a boolean")
         if entry["blog_url"] is not None:
             check_url(problems, f"{where}.blog_url", entry["blog_url"])
-        ids = entry["cve_ids"]
-        if not isinstance(ids, list) or len(ids) > 50:
-            problems.add(where, "cve_ids is not a short list")
-        else:
-            for cve in ids:
-                if not (isinstance(cve, str) and CVE.fullmatch(cve)):
-                    problems.add(where, "invalid cve id")
+        total += check_recent(problems, where, entry)
+    if total > MAX_RECENT_TOTAL:
+        problems.add("series", f"has more than {MAX_RECENT_TOTAL} recent releases in total")
     if len(set(names)) != len(names):
         problems.add("series", "has duplicate series")
     if entries and stable != 1:

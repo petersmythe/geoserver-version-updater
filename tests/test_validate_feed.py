@@ -90,10 +90,10 @@ class ValidatorTest(unittest.TestCase):
         for url in ("http://geoserver.org/x", "https://evil.example/x", "https://geoserver.org@evil.example/x",
                     "https://geoserver.org/a b", "javascript:alert(1)", 5):
             self.assert_rejected(first(lambda e, u=url: e.update(blog_url=u)), "blog_url")
-        self.assert_rejected(first(lambda e: e.update(blog_confirmed="yes")), "boolean")
+        self.assert_rejected(first(lambda e: e.update(security_flagged="yes")), "boolean")
         self.assert_rejected(first(lambda e: e.update(synchronized_release=1)), "boolean")
-        self.assert_rejected(first(lambda e: e.update(cve_ids=["<b>CVE-2026-1</b>"])), "cve")
-        self.assert_rejected(first(lambda e: e.update(cve_ids="CVE-2026-00000")), "cve_ids")
+        self.assert_rejected(first(lambda e: e.update(cve_ids=["CVE-2026-00000"])), "keys")
+        self.assert_rejected(first(lambda e: e.update(blog_confirmed=True)), "keys")
         self.assert_rejected(first(lambda e: e.update(extra="x")), "keys")
         self.assert_rejected(mutated(lambda d: d["series"].append(dict(d["series"][0]))), "duplicate series")
         self.assert_rejected(mutated(lambda d: d["series"].__setitem__(1, dict(d["series"][1], phase="stable"))), "exactly one stable")

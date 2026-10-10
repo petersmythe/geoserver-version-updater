@@ -431,19 +431,21 @@ class UrlAndBlogTest(unittest.TestCase):
             {
                 "series": "3.0.x",
                 "latest_version": "3.0.1",
-                "blog_confirmed": True,
                 "blog_url": "https://evil.example/x",
                 "security_flagged": True,
-                "cve_ids": ["CVE-2026-00000"],
+                "recent_releases": [
+                    {"version": "3.0.0", "blog_url": "https://geoserver.org@evil.example/x", "security_flagged": True},
+                    {"version": "2.28.4", "blog_url": "javascript:alert(1)", "security_flagged": True},
+                ],
             },
             {
                 "series": "2.28.x",
                 "latest_version": "2.28.5",
-                "blog_confirmed": True,
                 "blog_url": None,
                 "security_flagged": "yes",
-                "cve_ids": ["<b>"],
+                "recent_releases": [{"version": "2.28.5", "blog_url": "https://geoserver.org/ok", "security_flagged": "yes"}],
             },
+            "not an entry",
         ]
         looked_up = []
 
@@ -451,10 +453,11 @@ class UrlAndBlogTest(unittest.TestCase):
             looked_up.append(release.version)
             return None
 
-        entries = {e["series"]: e for e in cv.build_series_entries(real_releases(), lookup, previous)}
-        self.assertIn("3.0.1", looked_up)
-        self.assertIn("2.28.5", looked_up)
+        entries = {e["series"]: e for e in cv.build_series_entries(real_releases(), lookup, previous, NOW)}
+        for version in ("3.0.1", "3.0.0", "2.28.5", "2.28.4"):
+            self.assertIn(version, looked_up, version)
         self.assertIsNone(entries["3.0.x"]["blog_url"])
+        self.assertFalse(entries["3.0.x"]["security_flagged"])
 
     def test_previous_feed_with_the_wrong_shape_is_ignored(self):
         for previous in ("text", [], {"series": "x"}, {"series": [5, None, "x"]}):
@@ -482,8 +485,8 @@ class SerialisationTest(unittest.TestCase):
         feed, _, _ = generate([raw_advisory()])
         self.assertEqual(["source_note", "schema_version", "generated", "series", "advisories"], list(feed))
         self.assertEqual(
-            ["series", "phase", "latest_version", "published_at", "release_url", "blog_confirmed", "blog_url",
-             "security_flagged", "synchronized_release", "cve_ids"],
+            ["series", "phase", "latest_version", "published_at", "release_url", "blog_url",
+             "security_flagged", "synchronized_release", "recent_releases"],
             list(feed["series"][0]),
         )
 

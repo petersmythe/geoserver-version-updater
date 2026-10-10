@@ -65,10 +65,12 @@ SOURCE_NOTE = (
 )
 MAX_NOTE = 500
 COORDINATION_WINDOW = timedelta(hours=24)
-BLOG_LOOKBACK_DAYS = 240
+RECENT_DAYS = 180
 MAX_ADVISORY_PAGES = 3
 
 MAX_SERIES = 100
+MAX_RECENT_PER_SERIES = 50
+MAX_RECENT_TOTAL = 300
 MAX_ADVISORIES = 500
 MAX_RANGES = 50
 MAX_FILE_BYTES = 1024 * 1024
@@ -588,41 +590,77 @@ def transform_advisories(raw_advisories, stamp=DEFAULT_STAMP, log=print):
 # -------------------------------------------------------------------- series
 
 def valid_blog(known):
-    """Revalidate blog data reused from the previous feed; never trust it."""
+    """Revalidate blog data reused from the previous feed; never trust it. Only a
+    post that was actually found (a non-null, valid blog_url) is reused."""
     try:
+        url = known["blog_url"]
         return (
-            known["blog_confirmed"] is True
-            and (known["blog_url"] is None or checked_url(known["blog_url"]) == known["blog_url"])
+            isinstance(url, str)
+            and checked_url(url) == url
             and isinstance(known["security_flagged"], bool)
-            and isinstance(known["cve_ids"], list)
-            and all(isinstance(c, str) and CVE_RE.fullmatch(c) for c in known["cve_ids"])
         )
     except (KeyError, TypeError):
         return False
 
 
-def build_series_entries(releases, blog_lookup, previous_entries):
+def previous_blog_cache(previous_entries):
+    """version -> reusable blog data, from the series entries and their recent
+    releases in the previous feed."""
+    cache = {}
+    if not isinstance(previous_entries, list):
+        return cache
+    for entry in previous_entries:
+        if not isinstance(entry, dict):
+            continue
+        candidates = [(entry.get("latest_version"), entry)]
+        recent = entry.get("recent_releases")
+        if isinstance(recent, list):
+            candidates += [(item.get("version"), item) for item in recent if isinstance(item, dict)]
+        for version, item in candidates:
+            if isinstance(version, str) and valid_blog(item):
+                cache[version] = {"blog_url": item["blog_url"], "security_flagged": item["security_flagged"]}
+    return cache
+
+
+NO_BLOG = {"blog_url": None, "security_flagged": False}
+
+
+def build_series_entries(releases, blog_lookup, previous_entries, now, log=print):
     phases = infer_phases(releases)
     latest = latest_per_series(releases)
     synchronized = synchronized_versions(releases)
-    previous = {}
-    for entry in previous_entries if isinstance(previous_entries, list) else []:
-        if isinstance(entry, dict) and isinstance(entry.get("series"), str):
-            previous[(entry["series"], entry.get("latest_version"))] = entry
+    cache = previous_blog_cache(previous_entries)
+    window_start = now - timedelta(days=RECENT_DAYS)
     phase_order = {"stable": 0, "maintenance": 1, "archive": 2}
+
+    by_series = {}
+    for release in releases:
+        by_series.setdefault(release.series, []).append(release)
+
     entries = []
     for series in sorted(latest, key=lambda s: (phase_order[phases[s]], -s[0], -s[1])):
         release = latest[series]
-        known = previous.get((series_name(series), release.version))
-        if known and valid_blog(known):
-            blog = {key: known[key] for key in ("blog_confirmed", "blog_url", "security_flagged", "cve_ids")}
-        else:
-            blog = blog_lookup(release) or {
-                "blog_confirmed": False,
-                "blog_url": None,
-                "security_flagged": False,
-                "cve_ids": [],
-            }
+        in_window = sorted(
+            (r for r in by_series[series] if r.published >= window_start),
+            key=lambda r: (r.published, r.patch),
+            reverse=True,
+        )
+        if len(in_window) > MAX_RECENT_PER_SERIES:
+            warning(log, f"series {series_name(series)}: more than {MAX_RECENT_PER_SERIES} recent releases, dropped the oldest")
+            in_window = in_window[:MAX_RECENT_PER_SERIES]
+        recent = []
+        for item in in_window:
+            blog = cache.get(item.version) or blog_lookup(item) or NO_BLOG
+            recent.append(
+                {
+                    "version": item.version,
+                    "published_at": item.published_at,
+                    "blog_url": blog["blog_url"],
+                    "security_flagged": blog["security_flagged"],
+                    "synchronized_release": item.version in synchronized,
+                }
+            )
+        newest = next((i for i in recent if i["version"] == release.version), None)
         entries.append(
             {
                 "series": series_name(series),
@@ -630,13 +668,25 @@ def build_series_entries(releases, blog_lookup, previous_entries):
                 "latest_version": release.version,
                 "published_at": release.published_at,
                 "release_url": release.url,
-                "blog_confirmed": blog["blog_confirmed"],
-                "blog_url": blog["blog_url"],
-                "security_flagged": blog["security_flagged"],
+                "blog_url": newest["blog_url"] if newest else None,
+                "security_flagged": newest["security_flagged"] if newest else False,
                 "synchronized_release": release.version in synchronized,
-                "cve_ids": blog["cve_ids"],
+                "recent_releases": recent,
             }
         )
+
+    total = sum(len(e["recent_releases"]) for e in entries)
+    if total > MAX_RECENT_TOTAL:
+        warning(log, f"more than {MAX_RECENT_TOTAL} recent releases in total: dropped the oldest")
+        flat = sorted(
+            ((item["published_at"], item["version"], index) for index, e in enumerate(entries) for item in e["recent_releases"]),
+            reverse=True,
+        )
+        keep = {(version, index) for _, version, index in flat[:MAX_RECENT_TOTAL]}
+        for index, e in enumerate(entries):
+            e["recent_releases"] = [i for i in e["recent_releases"] if (i["version"], index) in keep]
+            if not any(i["version"] == e["latest_version"] for i in e["recent_releases"]):
+                e["blog_url"], e["security_flagged"] = None, False
     return entries
 
 
@@ -656,7 +706,7 @@ def build_feed(releases, raw_advisories, blog_lookup, previous, now, log=print):
         warning(log, "release data unreadable: keeping the previously published series")
         series = previous["series"]
     else:
-        series = build_series_entries(releases, blog_lookup, previous_entries)
+        series = build_series_entries(releases, blog_lookup, previous_entries, now, log)
         if len(series) > MAX_SERIES:
             warning(log, f"more than {MAX_SERIES} series: published the first {MAX_SERIES}")
             series = series[:MAX_SERIES]
@@ -819,7 +869,7 @@ class BlogLookup:
 
     def _index(self):
         if self.names is None:
-            cutoff = self.now - timedelta(days=BLOG_LOOKBACK_DAYS)
+            cutoff = self.now - timedelta(days=RECENT_DAYS + 14)
             self.names = []
             listing = parse_api_json(http_get(BLOG_POSTS_API, "application/vnd.github+json"))
             if not isinstance(listing, list):
@@ -846,7 +896,7 @@ class BlogLookup:
             return None
 
     def _lookup(self, release):
-        if self.now - release.published > timedelta(days=BLOG_LOOKBACK_DAYS):
+        if self.now - release.published > timedelta(days=RECENT_DAYS):
             return None
         needle = f"geoserver-{release.version.replace('.', '-')}-released"
         matches = [n for n in self._index() if needle in n]
@@ -857,14 +907,12 @@ class BlogLookup:
             return None
         frontmatter, text = parse_frontmatter(body)
         categories = frontmatter.get("categories", [])
-        cve_ids = sorted(set(CVE_FIND_RE.findall(text)))[:50]
+        names_a_cve = bool(CVE_FIND_RE.search(text))
         return {
-            "blog_confirmed": True,
             "blog_url": build_blog_url(matches[0], categories),
             "security_flagged": bool(
-                cve_ids or "vulnerability" in categories or "Security Considerations" in text
+                names_a_cve or "vulnerability" in categories or "Security Considerations" in text
             ),
-            "cve_ids": cve_ids,
         }
 
 
