@@ -42,6 +42,11 @@ USER_AGENT = "gs-updates-checker-feed"
 OUTPUT_PATH = Path(__file__).resolve().parent.parent / "versions.json"
 
 SCHEMA_VERSION = 1
+SOURCE_NOTE = (
+    "Generated from public GitHub data by an anonymous script on GitHub Actions. "
+    "Served by the jsDelivr CDN. The GeoServer team does not run the feed host, "
+    "receives no request logs, and cannot see which versions are being run."
+)
 COORDINATION_WINDOW = timedelta(hours=24)
 BLOG_LOOKBACK_DAYS = 240
 MAX_ADVISORY_PAGES = 3
@@ -247,6 +252,7 @@ def build_feed(releases, raw_advisories, blog_lookup, previous, now):
     content changes, so an unchanged feed produces no commit."""
     previous_entries = (previous or {}).get("series") or []
     feed = {
+        "source_note": SOURCE_NOTE,
         "schema_version": SCHEMA_VERSION,
         "generated": None,
         "series": build_series_entries(releases, blog_lookup, previous_entries),

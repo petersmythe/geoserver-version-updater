@@ -57,6 +57,7 @@ end-of-life dates are published or calculated.
 
 ```jsonc
 {
+  "source_note": "Generated from public GitHub data by an anonymous script ...",
   "schema_version": 1,
   "generated": "2026-10-19T10:15:00Z",   // when the content last changed
   "series": [

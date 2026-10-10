@@ -300,6 +300,11 @@ class FeedTest(unittest.TestCase):
             set(feed["series"][0]),
         )
 
+    def test_source_note_comes_first(self):
+        feed = cv.build_feed(real_releases(), [], no_blog, None, self.NOW)
+        self.assertEqual(["source_note", "schema_version", "generated", "series", "advisories"], list(feed))
+        self.assertEqual(cv.SOURCE_NOTE, feed["source_note"])
+
     def test_generated_only_moves_when_content_changes(self):
         first = cv.build_feed(real_releases(), [], no_blog, None, self.NOW)
         later = self.NOW + timedelta(minutes=15)
