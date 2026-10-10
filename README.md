@@ -184,15 +184,19 @@ is 60 requests per hour per address).
 
 ## Hardening
 
-The generator treats all upstream data as untrusted and publishes nothing it
-cannot prove clean. It copies only allow-listed fields (no names, e-mail
-addresses or other personal data), checks every type and format, builds URLs
-instead of copying them, reduces free text to plain text, and fails the run if
-any limit is exceeded or any advisory cannot be cleaned. A separate validator,
-which shares no code with the generator, re-checks the written file before it is
-committed and again before it is published. The workflow's actions are pinned to
-commit SHAs, and only the publish step has write permission. The full rules are
-in section 12 of the feed specification.
+The generator treats all upstream data as untrusted. It copies only allow-listed
+fields (no names, e-mail addresses or other personal data), checks every type
+and format, builds URLs instead of copying them, and reduces free text to plain
+text.
+
+One bad item never blocks the feed. A value that cannot be used is replaced by a
+safe neutral one, the advisory is still published (for manual review), and a
+warning is logged. The run fails only if GitHub cannot be reached, or there is
+nothing usable and nothing previously published to fall back on. A separate
+validator, which shares no code with the generator, re-checks the written file
+before it is committed and again before it is published. The workflow's actions
+are pinned to commit SHAs, and only the publish step has write permission. The
+full rules are in section 12 of the feed specification.
 
 Maintainers: in the repository settings, protect `main`, require the **Checks**
 workflow and code-owner review (`.github/CODEOWNERS`), and let only the

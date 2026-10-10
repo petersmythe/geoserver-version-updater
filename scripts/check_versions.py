@@ -8,10 +8,14 @@ plus the published security advisories.
 
 The upstream data is untrusted. Every output object is built by copying only
 allow-listed fields, every value is type- and format-checked (never coerced),
-free text is cleaned to plain text, URLs are built rather than copied, and any
-limit or validation failure fails the run so that nothing is published. The
-output is checked again by scripts/validate_feed.py, which shares no code with
-this file.
+free text is cleaned to plain text and URLs are built rather than copied.
+
+One bad item never blocks the feed. A value that cannot be used is replaced by
+a safe neutral one and the advisory is still published, in a form that tells the
+administrator to review it manually; the problem is logged as a warning. The run
+fails only when GitHub cannot be reached, or when there is nothing usable and
+nothing previously published to fall back on. The output is checked again by
+scripts/validate_feed.py, which shares no code with this file.
 
 All requests are unauthenticated and use a generic User-Agent. The script runs
 on GitHub-hosted runners and has no dependency beyond the Python standard
@@ -72,6 +76,11 @@ MAX_API_BYTES = 10 * 1024 * 1024
 MAX_JSON_DEPTH = 20
 
 SEVERITIES = ("critical", "high", "medium", "low")
+SEVERITY_RANK = {name: rank for rank, name in enumerate(SEVERITIES)}
+UNREADABLE_ID = "GHSA-0000-0000-0000"
+NO_SUMMARY = "Summary unavailable. See the advisory on GitHub."
+UNREADABLE_SEVERITY_NOTE = "[Severity unreadable] "
+DEFAULT_STAMP = "1970-01-01T00:00:00Z"
 URL_HOSTS = ("github.com", "geoserver.org", "cdn.jsdelivr.net")
 
 RELEASE_TAG_RE = re.compile(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)")
@@ -96,7 +105,22 @@ _UNSAFE_CATEGORIES = ("Cc", "Cf", "Cs", "Co")
 
 
 class FeedError(Exception):
-    """The run must fail and publish nothing. Messages never echo raw input."""
+    """Nothing usable can be published. Messages never echo raw input."""
+
+
+class UpstreamError(Exception):
+    """GitHub could not be reached or refused the request: the run fails."""
+
+
+class Poisoned:
+    """Stands in for a value that cannot be trusted: a duplicate key, a
+    non-finite number, or JSON nested too deeply. It is never a dict, list or
+    string, so the field checks treat it as an unreadable value."""
+
+    __slots__ = ()
+
+
+POISON = Poisoned()
 
 
 def safe_repr(value, limit=60):
@@ -140,52 +164,63 @@ def checked_timestamp(value, label):
 
 def _no_duplicate_keys(pairs):
     result = {}
+    poisoned = False
     for key, value in pairs:
         if key in result:
-            raise FeedError("duplicate key in an API response")
+            poisoned = True
         result[key] = value
-    return result
+    return POISON if poisoned else result
 
 
-def _reject_constant(name):
-    raise FeedError("non-finite number in an API response")
+def _poison_constant(name):
+    return POISON
 
 
 def _checked_float(text):
     value = float(text)
-    if value in (float("inf"), float("-inf")) or value != value:
-        raise FeedError("non-finite number in an API response")
-    return value
+    return POISON if value != value or value in (float("inf"), float("-inf")) else value
 
 
-def _check_depth(data):
+def _limit_depth(data):
     stack = [(data, 1)]
     while stack:
-        item, depth = stack.pop()
-        if depth > MAX_JSON_DEPTH:
-            raise FeedError("an API response is nested too deeply")
-        if isinstance(item, dict):
-            stack.extend((v, depth + 1) for v in item.values())
-        elif isinstance(item, list):
-            stack.extend((v, depth + 1) for v in item)
+        container, depth = stack.pop()
+        if isinstance(container, dict):
+            keys = list(container)
+            get = container.__getitem__
+        elif isinstance(container, list):
+            keys = range(len(container))
+            get = container.__getitem__
+        else:
+            continue
+        for key in keys:
+            child = get(key)
+            if isinstance(child, (dict, list)):
+                if depth + 1 > MAX_JSON_DEPTH:
+                    container[key] = POISON
+                else:
+                    stack.append((child, depth + 1))
+    return data
 
 
 def parse_api_json(text):
+    """Parse an API response. Bad pieces (duplicate keys, non-finite numbers,
+    over-deep nesting) become POISON so that only the item holding them is
+    affected. A response that is not JSON at all, or too large, raises FeedError."""
     if len(text) > MAX_API_BYTES:
         raise FeedError("an API response is too large")
     try:
         data = json.loads(
             text,
             object_pairs_hook=_no_duplicate_keys,
-            parse_constant=_reject_constant,
+            parse_constant=_poison_constant,
             parse_float=_checked_float,
         )
     except RecursionError:
         raise FeedError("an API response is nested too deeply")
     except ValueError:
         raise FeedError("an API response is not valid JSON")
-    _check_depth(data)
-    return data
+    return _limit_depth(data)
 
 
 # ------------------------------------------------------------------ cleaning
@@ -369,61 +404,86 @@ def derive_patched_versions(patched_strings):
     }
 
 
-def transform_advisory(raw, index=0):
+def warning(log, message):
+    log("WARNING " + message)
+
+
+def _safe_summary(value, label, log):
+    try:
+        return clean_text(value, MAX_SUMMARY)
+    except FeedError:
+        warning(log, f"{label}: summary unreadable, replaced by a neutral text")
+        return NO_SUMMARY
+
+
+def transform_advisory(raw, index=0, stamp=DEFAULT_STAMP, log=print):
+    """Return a valid advisory, degrading any unusable field to a safe value so
+    the advisory is still published (for manual review). Returns None only when
+    the advisory cannot be identified at all."""
     if not isinstance(raw, dict):
-        raise FeedError(f"advisory #{index}: not an object")
+        warning(log, f"advisory #{index}: not an object, cannot be identified")
+        return None
     ghsa_id = raw.get("ghsa_id")
     if not isinstance(ghsa_id, str) or not GHSA_RE.fullmatch(ghsa_id):
-        raise FeedError(f"advisory #{index}: invalid ghsa_id {safe_repr(ghsa_id)}")
+        warning(log, f"advisory #{index}: invalid ghsa_id {safe_repr(ghsa_id)}, cannot be identified")
+        return None
     label = f"advisory {ghsa_id}"
 
     cve_id = raw.get("cve_id")
     if cve_id is not None and not (isinstance(cve_id, str) and CVE_RE.fullmatch(cve_id)):
+        warning(log, f"{label}: invalid cve_id omitted")
         cve_id = False
 
-    summary = raw.get("summary")
-    if not isinstance(summary, str):
-        raise FeedError(f"{label}: summary is not a string")
+    summary = _safe_summary(raw.get("summary"), label, log)
     severity = raw.get("severity")
     if severity not in SEVERITIES:
-        raise FeedError(f"{label}: invalid severity {safe_repr(severity)}")
-    published_at = checked_timestamp(raw.get("published_at"), label)
+        warning(log, f"{label}: severity {safe_repr(severity)} unreadable, published as high for review")
+        severity = "high"
+        summary = (UNREADABLE_SEVERITY_NOTE + summary)[:MAX_SUMMARY].rstrip()
+
+    try:
+        published_at = checked_timestamp(raw.get("published_at"), label)
+    except FeedError:
+        warning(log, f"{label}: published_at unreadable, replaced by the generation time")
+        published_at = stamp
 
     vulnerabilities = raw.get("vulnerabilities")
+    ranges = []
+    patched_strings = []
     if vulnerabilities is None:
         vulnerabilities = []
     if not isinstance(vulnerabilities, list):
-        raise FeedError(f"{label}: vulnerabilities is not a list")
-    ranges = []
-    patched_strings = []
+        warning(log, f"{label}: vulnerabilities unreadable, published for manual review")
+        ranges.append("")
+        vulnerabilities = []
     for vulnerability in vulnerabilities:
         if not isinstance(vulnerability, dict):
-            raise FeedError(f"{label}: a vulnerability is not an object")
-        version_range = vulnerability.get("vulnerable_version_range")
-        if version_range is not None:
-            try:
+            warning(log, f"{label}: a vulnerability entry is unreadable, published for manual review")
+            cleaned = ""
+        else:
+            version_range = vulnerability.get("vulnerable_version_range")
+            if version_range is None:
+                cleaned = None
+            elif isinstance(version_range, str):
                 cleaned = clean_range(version_range)
-            except FeedError:
-                raise FeedError(f"{label}: a version range is not a string")
-            if cleaned not in ranges:
-                ranges.append(cleaned)
-        patched = vulnerability.get("patched_versions")
-        if patched is not None:
-            if not isinstance(patched, str):
-                raise FeedError(f"{label}: patched_versions is not a string")
-            patched_strings.append(patched)
+            else:
+                warning(log, f"{label}: a version range is unreadable, published for manual review")
+                cleaned = ""
+            patched = vulnerability.get("patched_versions")
+            if isinstance(patched, str):
+                patched_strings.append(patched)
+            elif patched is not None:
+                warning(log, f"{label}: a patched_versions value is unreadable and ignored")
+        if cleaned is not None and cleaned not in ranges:
+            ranges.append(cleaned)
     if len(ranges) > MAX_RANGES:
-        raise FeedError(f"{label}: more than {MAX_RANGES} version ranges")
-
-    try:
-        cleaned_summary = clean_text(summary, MAX_SUMMARY)
-    except FeedError:
-        raise FeedError(f"{label}: summary could not be cleaned")
+        warning(log, f"{label}: more than {MAX_RANGES} version ranges, published for manual review")
+        ranges = [""]
 
     advisory = {"ghsa_id": ghsa_id}
     if cve_id is not False:
         advisory["cve_id"] = cve_id
-    advisory["summary"] = cleaned_summary
+    advisory["summary"] = summary
     advisory["severity"] = severity
     advisory["published_at"] = published_at
     advisory["vulnerable_versions"] = ranges
@@ -440,24 +500,63 @@ def applies_to_releases(advisory):
     return not ranges or not all(HASH_RE.fullmatch(r) for r in ranges)
 
 
-def transform_advisories(raw_advisories, log=print):
-    if not isinstance(raw_advisories, list):
-        raise FeedError("the advisory list is not a list")
-    if len(raw_advisories) > MAX_ADVISORIES:
-        raise FeedError(f"more than {MAX_ADVISORIES} advisories")
+def unreadable_placeholder(count, stamp):
+    """One entry standing for every advisory that could not be identified, so
+    that none disappears without trace. It is published for manual review."""
+    return {
+        "ghsa_id": UNREADABLE_ID,
+        "cve_id": None,
+        "summary": f"{count} security advisor{'y' if count == 1 else 'ies'} could not be read. "
+        "See the GeoServer security advisories on GitHub.",
+        "severity": "high",
+        "published_at": stamp,
+        "vulnerable_versions": [""],
+        "patched_versions": {},
+    }
+
+
+def ranked(advisories):
+    """Most important first: the placeholder, then by severity, then newest."""
+    ordered = sorted(advisories, key=lambda a: a["ghsa_id"])
+    ordered.sort(key=lambda a: a["published_at"], reverse=True)
+    ordered.sort(key=lambda a: (a["ghsa_id"] != UNREADABLE_ID, SEVERITY_RANK[a["severity"]]))
+    return ordered
+
+
+def canonical_order(advisories):
+    ordered = sorted(advisories, key=lambda a: a["ghsa_id"])
+    ordered.sort(key=lambda a: a["published_at"], reverse=True)
+    return ordered
+
+
+def transform_advisories(raw_advisories, stamp=DEFAULT_STAMP, log=print):
     advisories = []
+    seen = set()
+    unidentified = 0
     for index, raw in enumerate(raw_advisories):
-        advisory = transform_advisory(raw, index)
-        if applies_to_releases(advisory):
-            advisories.append(advisory)
-        else:
+        advisory = transform_advisory(raw, index, stamp, log)
+        if advisory is None:
+            unidentified += 1
+        elif advisory["ghsa_id"] in seen:
+            warning(log, f"advisory {advisory['ghsa_id']}: duplicate id, later entry ignored")
+        elif not applies_to_releases(advisory):
+            seen.add(advisory["ghsa_id"])
             log(f"excluded {advisory['ghsa_id']}: its only ranges are commit hashes")
-    advisories.sort(key=lambda a: a["ghsa_id"])
-    advisories.sort(key=lambda a: a["published_at"], reverse=True)
-    ids = [a["ghsa_id"] for a in advisories]
-    if len(set(ids)) != len(ids):
-        raise FeedError("duplicate advisory ids")
-    return advisories
+        else:
+            seen.add(advisory["ghsa_id"])
+            advisories.append(advisory)
+    if unidentified:
+        advisories.append(unreadable_placeholder(unidentified, stamp))
+    if len(advisories) > MAX_ADVISORIES:
+        best = ranked(advisories)
+        kept, dropped = best[:MAX_ADVISORIES], best[MAX_ADVISORIES:]
+        warning(
+            log,
+            f"more than {MAX_ADVISORIES} advisories: published the most severe and newest, "
+            f"dropped {len(dropped)} (first: {', '.join(a['ghsa_id'] for a in dropped[:5])})",
+        )
+        advisories = kept
+    return canonical_order(advisories)
 
 
 # -------------------------------------------------------------------- series
@@ -485,9 +584,6 @@ def build_series_entries(releases, blog_lookup, previous_entries):
         if isinstance(entry, dict) and isinstance(entry.get("series"), str):
             previous[(entry["series"], entry.get("latest_version"))] = entry
     phase_order = {"stable": 0, "maintenance": 1, "archive": 2}
-    if len(latest) > MAX_SERIES:
-        raise FeedError(f"more than {MAX_SERIES} series")
-
     entries = []
     for series in sorted(latest, key=lambda s: (phase_order[phases[s]], -s[0], -s[1])):
         release = latest[series]
@@ -519,34 +615,70 @@ def build_series_entries(releases, blog_lookup, previous_entries):
 
 
 def build_feed(releases, raw_advisories, blog_lookup, previous, now, log=print):
-    """previous is the prior feed (or None). `generated` only moves when the
-    content changes, so an unchanged feed produces no commit."""
+    """previous is the prior feed (or None). `releases` or `raw_advisories` may be
+    None when GitHub's response could not be read: the previously published
+    section is kept. `generated` only moves when the content changes, so an
+    unchanged feed produces no commit."""
     if not isinstance(previous, dict):
         previous = None
+    stamp = now.strftime(TIMESTAMP_FORMAT)
     previous_entries = (previous or {}).get("series") or []
+
+    if releases is None:
+        if not previous:
+            raise FeedError("the release data is unreadable and there is no previous feed to fall back on")
+        warning(log, "release data unreadable: keeping the previously published series")
+        series = previous["series"]
+    else:
+        series = build_series_entries(releases, blog_lookup, previous_entries)
+        if len(series) > MAX_SERIES:
+            warning(log, f"more than {MAX_SERIES} series: published the first {MAX_SERIES}")
+            series = series[:MAX_SERIES]
+
+    if raw_advisories is None:
+        if not previous:
+            raise FeedError("the advisory data is unreadable and there is no previous feed to fall back on")
+        warning(log, "advisory data unreadable: keeping the previously published advisories")
+        advisories = previous.get("advisories")
+    else:
+        advisories = transform_advisories(raw_advisories, stamp, log)
+
     feed = {
         "source_note": SOURCE_NOTE,
         "schema_version": SCHEMA_VERSION,
         "generated": None,
-        "series": build_series_entries(releases, blog_lookup, previous_entries),
-        "advisories": transform_advisories(raw_advisories, log),
+        "series": series,
+        "advisories": advisories,
     }
     if previous and {k: v for k, v in previous.items() if k != "generated"} == {
         k: v for k, v in feed.items() if k != "generated"
     }:
         feed["generated"] = previous["generated"]
     else:
-        feed["generated"] = now.strftime(TIMESTAMP_FORMAT)
+        feed["generated"] = stamp
     return feed
 
 
-def serialize(feed):
-    """UTF-8, stable key order, one document, with <, > and & escaped inside
-    strings. Fails if the file would exceed the size limit."""
+def _render(feed):
     text = json.dumps(feed, indent=2, ensure_ascii=False, allow_nan=False)
-    text = text.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e") + "\n"
+    return text.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e") + "\n"
+
+
+def serialize(feed, log=print):
+    """UTF-8, stable key order, one document, with <, > and & escaped inside
+    strings. If the file would exceed the size limit, the least important
+    advisories are dropped, loudly, until it fits."""
+    text = _render(feed)
+    if len(text.encode("utf-8")) <= MAX_FILE_BYTES:
+        return text
+    remaining = ranked(feed["advisories"])
+    dropped = []
+    while remaining and len(text.encode("utf-8")) > MAX_FILE_BYTES:
+        dropped.append(remaining.pop()["ghsa_id"])
+        text = _render(dict(feed, advisories=canonical_order(remaining)))
     if len(text.encode("utf-8")) > MAX_FILE_BYTES:
-        raise FeedError("the feed would exceed 1 MiB")
+        raise FeedError("the feed exceeds 1 MiB even without advisories")
+    warning(log, f"size limit: dropped {len(dropped)} least important advisories (first: {', '.join(dropped[:5])})")
     return text
 
 
@@ -565,7 +697,7 @@ def http_get(url, accept, retries=3, backoff=2.0, allow_404=False):
             if allow_404 and error.code == 404:
                 return None
             if error.code == 403 and "rate limit" in error.read(4096).decode("utf-8", "ignore").lower():
-                raise FeedError(
+                raise UpstreamError(
                     "GitHub rate limit hit on an unauthenticated request. The script is "
                     "deliberately unauthenticated; reduce the run frequency instead of adding a token."
                 )
@@ -578,29 +710,47 @@ def http_get(url, accept, retries=3, backoff=2.0, allow_404=False):
     return None
 
 
-def http_get_json(url):
-    return parse_api_json(http_get(url, "application/vnd.github+json"))
+def parse_releases(raw_releases, log=print):
+    """A malformed release is skipped with a warning; it does not stop the feed."""
+    releases = []
+    for index, raw in enumerate(raw_releases):
+        try:
+            release = parse_release(raw)
+        except FeedError as error:
+            warning(log, f"release #{index} skipped: {error}")
+            continue
+        if release:
+            releases.append(release)
+    return releases
 
 
-def fetch_releases():
-    raw_releases = http_get_json(GITHUB_RELEASES)
-    if not isinstance(raw_releases, list):
-        raise FeedError("the release list is not a list")
-    return [r for r in (parse_release(raw) for raw in raw_releases) if r]
-
-
-def fetch_raw_advisories():
-    """Any failure aborts the run: a feed whose advisories silently vanished
-    would stop warning every client."""
-    advisories = []
-    for page in range(1, MAX_ADVISORY_PAGES + 1):
-        batch = http_get_json(f"{GITHUB_ADVISORIES}&page={page}")
+def fetch_json_list(url_for_page, pages, log, what):
+    """Return the items of a paged list response, or None if GitHub answered but
+    the content cannot be read. Network and HTTP failures propagate and fail the run."""
+    items = []
+    for page in range(1, pages + 1):
+        text = http_get(url_for_page(page), "application/vnd.github+json")
+        try:
+            batch = parse_api_json(text)
+        except FeedError as error:
+            warning(log, f"{what} response unreadable: {error}")
+            return None
         if not isinstance(batch, list):
-            raise FeedError("the advisory list is not a list")
-        advisories.extend(batch)
+            warning(log, f"{what} response is not a list")
+            return None
+        items.extend(batch)
         if len(batch) < 100:
             break
-    return advisories
+    return items
+
+
+def fetch_releases(log=print):
+    raw = fetch_json_list(lambda page: GITHUB_RELEASES, 1, log, "release")
+    return None if raw is None else parse_releases(raw, log)
+
+
+def fetch_raw_advisories(log=print):
+    return fetch_json_list(lambda page: f"{GITHUB_ADVISORIES}&page={page}", MAX_ADVISORY_PAGES, log, "advisory")
 
 
 def parse_frontmatter(markdown):
@@ -636,15 +786,16 @@ class BlogLookup:
     """Finds the blog post for a release. The post index is fetched at most once
     per run, and only when a recent release has no confirmed post yet."""
 
-    def __init__(self, now):
+    def __init__(self, now, log=print):
         self.now = now
+        self.log = log
         self.names = None
 
     def _index(self):
         if self.names is None:
             cutoff = self.now - timedelta(days=BLOG_LOOKBACK_DAYS)
             self.names = []
-            listing = http_get_json(BLOG_POSTS_API)
+            listing = parse_api_json(http_get(BLOG_POSTS_API, "application/vnd.github+json"))
             if not isinstance(listing, list):
                 raise FeedError("the blog post index is not a list")
             for entry in listing:
@@ -661,6 +812,14 @@ class BlogLookup:
         return self.names
 
     def __call__(self, release):
+        """A blog lookup failure leaves the release unconfirmed; it never blocks the feed."""
+        try:
+            return self._lookup(release)
+        except (FeedError, OSError, urllib.error.URLError, ValueError) as error:
+            warning(self.log, f"blog lookup for {release.version} failed ({type(error).__name__}); left unconfirmed")
+            return None
+
+    def _lookup(self, release):
         if self.now - release.published > timedelta(days=BLOG_LOOKBACK_DAYS):
             return None
         needle = f"geoserver-{release.version.replace('.', '-')}-released"
@@ -694,24 +853,38 @@ def load_previous():
         not isinstance(previous, dict)
         or previous.get("schema_version") != SCHEMA_VERSION
         or not isinstance(previous.get("series"), list)
+        or not isinstance(previous.get("advisories"), list)
         or not isinstance(previous.get("generated"), str)
     ):
         return None
     return previous
 
 
+def emit(message):
+    """Warnings become GitHub Actions annotations. Messages are built from
+    escaped, truncated text only, and are restricted to a safe character set."""
+    safe = re.sub(r"[^A-Za-z0-9 _.,:;()#'\[\]/=-]", "?", message)[:300]
+    print(f"::warning::{safe[len('WARNING '):]}" if safe.startswith("WARNING ") else safe)
+
+
 def main():
     now = datetime.now(timezone.utc)
     try:
         feed = build_feed(
-            fetch_releases(), fetch_raw_advisories(), BlogLookup(now), load_previous(), now
+            fetch_releases(emit), fetch_raw_advisories(emit), BlogLookup(now, emit), load_previous(), now, emit
         )
-        text = serialize(feed)
+        text = serialize(feed, emit)
     except FeedError as error:
         print(f"ERROR: version check failed: {error}", file=sys.stderr)
         sys.exit(1)
+    except UpstreamError as error:
+        print(f"ERROR: GitHub unavailable: {error}", file=sys.stderr)
+        sys.exit(1)
     except urllib.error.HTTPError as error:
-        print(f"ERROR: version check failed: HTTP {error.code} from GitHub", file=sys.stderr)
+        print(f"ERROR: GitHub returned HTTP {error.code}", file=sys.stderr)
+        sys.exit(1)
+    except (urllib.error.URLError, OSError) as error:
+        print(f"ERROR: GitHub could not be reached ({type(error).__name__})", file=sys.stderr)
         sys.exit(1)
     except Exception as error:
         print(f"ERROR: version check failed: {type(error).__name__}", file=sys.stderr)
